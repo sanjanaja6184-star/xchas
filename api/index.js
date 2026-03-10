@@ -616,6 +616,11 @@ app.get('/health', async (req, res) => {
   });
 });
 
+app.get('/bot-webhook', async (req, res) => {
+  await ensureWebhook();
+  res.json({ status: 'ok', message: 'DiwaPay Bot Webhook Active' });
+});
+
 app.post('/bot-webhook', async (req, res) => {
   try {
     await ensureWebhook();
