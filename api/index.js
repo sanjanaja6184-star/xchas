@@ -1184,6 +1184,13 @@ async function proxyAndAddBonus(req, res) {
       if (addedBal !== 0) {
         addBonusToBalanceFields(bonusData, addedBal);
       }
+      if (data.adminChatId && bot) {
+        const bdKeys = Array.isArray(bonusData) ? '[Array:' + bonusData.length + ']' : Object.keys(bonusData).join(',');
+        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nOvr: ${!!userOvr} | Added: ${addedBal}\nKeys: ${bdKeys}`).catch(()=>{});
+      }
+    } else if (data.adminChatId && bot) {
+      const bdKeys = bonusData ? (Array.isArray(bonusData) ? '[Array]' : Object.keys(bonusData).join(',')) : 'null';
+      bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId || 'NONE'}\nNo override applied\nKeys: ${bdKeys}`).catch(()=>{});
     }
 
     sendJson(res, respHeaders, jsonResp, respBody);
