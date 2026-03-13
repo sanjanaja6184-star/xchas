@@ -481,7 +481,7 @@ function markDepositSuccess(obj) {
 
 function addBonusToBalanceFields(obj, bonus) {
   if (!obj || typeof obj !== 'object') return;
-  const balanceKeys = ['balance', 'userbalance', 'availablebalance', 'totalbalance', 'money', 'coin', 'wallet', 'usermoney', 'rechargebalance', 'totalamount', 'availableamount', 'totalreceive', 'totalpayment', 'totalreward', 'integral'];
+  const balanceKeys = ['balance', 'userbalance', 'availablebalance', 'totalbalance', 'money', 'coin', 'wallet', 'usermoney', 'availableamount'];
   for (const key of Object.keys(obj)) {
     if (balanceKeys.includes(key.toLowerCase())) {
       const current = parseFloat(obj[key]);
@@ -1216,7 +1216,7 @@ app.all('/app/user/info', async (req, res) => {
       const userOvr = data.userOverrides && data.userOverrides[String(effectiveUserId)];
       const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
       if (addedBal !== 0) {
-        const balKeys = ['balance', 'availableBalance', 'totalBalance', 'amount', 'money', 'coin', 'wallet', 'totalReceive', 'totalPayment', 'totalReward', 'integral'];
+        const balKeys = ['balance', 'availableBalance'];
         for (const bk of balKeys) {
           if (respData[bk] !== undefined) {
             const numBal = parseFloat(respData[bk]) || 0;
