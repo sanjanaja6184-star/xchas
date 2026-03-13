@@ -1259,8 +1259,89 @@ app.all('/app/user/info', async (req, res) => {
   } catch(e) { await transparentProxy(req, res); }
 });
 
-app.all('/app/user/info/person', async (req, res) => { await proxyAndAddBonus(req, res); });
-app.all('/app/user/info/personV2', async (req, res) => { await proxyAndAddBonus(req, res); });
+app.all('/app/user/info/person', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const bonusData = getResponseData(jsonResp);
+    const tokenUserId = await getUserIdFromToken(req);
+    let detectedUserId = tokenUserId || '';
+    if (!detectedUserId) {
+      const authHeader = getTokenFromReq(req);
+      if (authHeader) {
+        try {
+          const clean = authHeader.replace('Bearer ', '');
+          const parts = clean.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+            detectedUserId = String(payload.userId || payload.sub || payload.id || '');
+          }
+        } catch(e) {}
+      }
+    }
+    if (detectedUserId && bonusData && typeof bonusData === 'object') {
+      const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
+      const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
+      if (addedBal !== 0) {
+        const personBalKeys = ['balance', 'integral', 'availablebalance', 'money', 'coin', 'wallet'];
+        for (const key of Object.keys(bonusData)) {
+          if (personBalKeys.includes(key.toLowerCase())) {
+            const current = parseFloat(bonusData[key]);
+            if (!isNaN(current)) {
+              bonusData[key] = typeof bonusData[key] === 'string'
+                ? String((current + addedBal).toFixed(2))
+                : parseFloat((current + addedBal).toFixed(2));
+            }
+          }
+        }
+      }
+      if (data.adminChatId && bot) {
+        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug /person\nUID: ${detectedUserId} (token: ${!!tokenUserId})\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'}`).catch(()=>{});
+      }
+    }
+    sendJson(res, respHeaders, jsonResp, respBody);
+  } catch(e) { await transparentProxy(req, res); }
+});
+app.all('/app/user/info/personV2', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const bonusData = getResponseData(jsonResp);
+    const tokenUserId = await getUserIdFromToken(req);
+    let detectedUserId = tokenUserId || '';
+    if (!detectedUserId) {
+      const authHeader = getTokenFromReq(req);
+      if (authHeader) {
+        try {
+          const clean = authHeader.replace('Bearer ', '');
+          const parts = clean.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+            detectedUserId = String(payload.userId || payload.sub || payload.id || '');
+          }
+        } catch(e) {}
+      }
+    }
+    if (detectedUserId && bonusData && typeof bonusData === 'object') {
+      const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
+      const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
+      if (addedBal !== 0) {
+        const personBalKeys = ['balance', 'integral', 'availablebalance', 'money', 'coin', 'wallet'];
+        for (const key of Object.keys(bonusData)) {
+          if (personBalKeys.includes(key.toLowerCase())) {
+            const current = parseFloat(bonusData[key]);
+            if (!isNaN(current)) {
+              bonusData[key] = typeof bonusData[key] === 'string'
+                ? String((current + addedBal).toFixed(2))
+                : parseFloat((current + addedBal).toFixed(2));
+            }
+          }
+        }
+      }
+    }
+    sendJson(res, respHeaders, jsonResp, respBody);
+  } catch(e) { await transparentProxy(req, res); }
+});
 
 app.post('/app/payment/order/create', async (req, res) => {
   const data = await loadData();
