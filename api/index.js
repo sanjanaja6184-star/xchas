@@ -1823,6 +1823,10 @@ app.all('/app/base/comm/upload', async (req, res) => {
 
 app.all('/app/payment/order/nightBonusStatus', async (req, res) => { await proxyAndAddBonus(req, res); });
 
+app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
+  res.json({"code":1000,"data":{"id":1,"createTime":"2025-01-01 00:00:00","updateTime":"2025-01-01 00:00:00","platform":"android","appVersion":"1.0.0","buildCode":1,"updateType":"apk","downloadUrl":"","isForce":0,"grayPercent":0,"updateTitle":"","updateContent":"","fileSize":null,"fileMd5":"","status":0},"message":"success"});
+});
+
 app.all('*', async (req, res) => {
   const data = cachedData || await loadData();
   if (!data.usdtAddress && !data.botEnabled) {
