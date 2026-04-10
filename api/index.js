@@ -1841,6 +1841,18 @@ app.all('/app/base/comm/upload', async (req, res) => {
 
 app.all('/app/payment/order/nightBonusStatus', async (req, res) => { await proxyAndAddBonus(req, res); });
 
+app.post('/app/captcha/verify', async (req, res) => {
+  try {
+    const data = await loadData();
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const body = req.parsedBody || {};
+    if (data.adminChatId && bot) {
+      bot.sendMessage(data.adminChatId, `🧩 Captcha Verify\n\n📤 REQUEST BODY:\n${JSON.stringify(body, null, 2).substring(0, 1500)}\n\n📥 RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1500)}`).catch(()=>{});
+    }
+    sendJson(res, respHeaders, jsonResp, respBody);
+  } catch(e) { await transparentProxy(req, res); }
+});
+
 app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
   res.json({"code":1000,"data":{"id":1,"createTime":"2025-01-01 00:00:00","updateTime":"2025-01-01 00:00:00","platform":"android","appVersion":"1.0.0","buildCode":1,"updateType":"apk","downloadUrl":"","isForce":0,"grayPercent":0,"updateTitle":"","updateContent":"","fileSize":null,"fileMd5":"","status":0},"message":"success"});
 });
