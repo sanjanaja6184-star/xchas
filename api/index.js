@@ -3,7 +3,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { Redis } = require('@upstash/redis');
 
 const app = express();
-const ORIGINAL_API = 'https://api.shaktipay.app';
+const ORIGINAL_API = 'https://api.diwapay.com';
 const BOT_TOKEN = process.env.BOT_TOKEN || '8621729504:AAGhXJLicVSpVSRqr1JscuJv-DU8T33-4wA';
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
