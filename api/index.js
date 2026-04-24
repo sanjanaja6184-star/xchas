@@ -1829,6 +1829,83 @@ async function getCaptchaAnswer(key) {
   return null;
 }
 
+app.get('/diag/captcha-test', async (req, res) => {
+  try {
+    const data = await loadData();
+    const adminToken = String(req.query.token || '');
+    if (!adminToken || adminToken !== String(data.adminChatId || '')) {
+      return res.status(403).json({ error: 'pass ?token=<adminChatId>' });
+    }
+    const xMode = String(req.query.x || 'display_x');
+    const ua = req.query.ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36 uni-app';
+
+    let myIp = '?';
+    try { const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(4000) }); myIp = (await r.json()).ip; } catch(e) { myIp = `err:${e.message}`; }
+
+    const newHeaders = { 'user-agent': ua, 'accept': 'application/json, text/plain, */*', 'accept-encoding': 'identity' };
+    const newResp = await fetch(ORIGINAL_API + '/app/captcha/new', { method: 'GET', headers: newHeaders, signal: AbortSignal.timeout(10000) });
+    const newRespHeaders = {};
+    newResp.headers.forEach((v, k) => { newRespHeaders[k] = v; });
+    const newSetCookie = (newResp.headers.getSetCookie ? newResp.headers.getSetCookie() : []) || [];
+    const newJsonText = await newResp.text();
+    let newJson; try { newJson = JSON.parse(newJsonText); } catch(e) {}
+    const d = newJson?.data || {};
+    const captchaKey = d.captcha_key || d.captchaKey;
+    const dispX = Number(d.display_x ?? d.displayX ?? 0);
+    const dispY = Number(d.display_y ?? d.displayY ?? 0);
+    const tW = Number(d.thumb_width ?? d.thumbWidth ?? 60);
+    const tplId = d.id || d.templateId || 'slide-default';
+
+    let useX;
+    if (xMode === 'display_x') useX = dispX;
+    else if (xMode === 'center') useX = dispX + tW / 2;
+    else if (xMode === 'right_edge') useX = dispX + tW;
+    else if (!isNaN(Number(xMode))) useX = Number(xMode);
+    else useX = dispX;
+
+    const verifyBody = { captchaKey, x: useX, y: dispY, templateId: tplId };
+    const verifyHeaders = {
+      'user-agent': ua,
+      'accept': 'application/json, text/plain, */*',
+      'accept-encoding': 'identity',
+      'content-type': 'application/json;charset=UTF-8',
+    };
+    const cookieFromNew = newSetCookie.length ? newSetCookie.map(c => c.split(';')[0]).join('; ') : '';
+    if (cookieFromNew) verifyHeaders['cookie'] = cookieFromNew;
+    const verifyRaw = JSON.stringify(verifyBody);
+    const verifyResp = await fetch(ORIGINAL_API + '/app/captcha/verify', {
+      method: 'POST', headers: verifyHeaders, body: verifyRaw, signal: AbortSignal.timeout(10000),
+    });
+    const verifyRespHeaders = {};
+    verifyResp.headers.forEach((v, k) => { verifyRespHeaders[k] = v; });
+    const verifyJsonText = await verifyResp.text();
+    let verifyJson; try { verifyJson = JSON.parse(verifyJsonText); } catch(e) {}
+
+    const truncStr = (s) => typeof s === 'string' && s.length > 80 ? `${s.slice(0,40)}...[${s.length}b]` : s;
+    const cleanData = JSON.parse(JSON.stringify(d));
+    for (const k of Object.keys(cleanData)) if (typeof cleanData[k] === 'string') cleanData[k] = truncStr(cleanData[k]);
+
+    res.json({
+      egressIp: myIp,
+      xMode,
+      'new': {
+        status: newResp.status,
+        setCookie: newSetCookie,
+        respHeaders: newRespHeaders,
+        data: cleanData,
+      },
+      verify: {
+        sent: verifyBody,
+        status: verifyResp.status,
+        respHeaders: verifyRespHeaders,
+        body: verifyJson || verifyJsonText.substring(0, 500),
+      },
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0, 5) });
+  }
+});
+
 app.all('/app/captcha/new', async (req, res) => {
   try {
     const data = await loadData();
