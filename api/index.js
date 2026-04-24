@@ -2382,12 +2382,18 @@ app.post('/app/captcha/verify', async (req, res) => {
     const data = await loadData();
     const body = req.parsedBody || {};
     const inKey = body.captchaKey || body.captcha_key;
-    const passthrough = req.query && (req.query.nosolve === '1' || req.query.passthrough === '1');
-    let autoSolved = '';
+    // AUTO-SOLVE is OPT-IN now. Default = PURE PASSTHROUGH (mobile's manual swipe goes through unmodified).
+    // Reason: server-side verify (same lambda) also returns 1001 with our calculated x, suggesting algorithm
+    // is finding decoys, not the real gap. Let user's manual swipe through to test.
+    // To re-enable auto-solve: add ?solve=1 to URL (or set data.captchaAutoSolve = true via admin).
+    const forceSolve = req.query && (req.query.solve === '1' || req.query.autosolve === '1');
+    const enableAutoSolve = forceSolve || data.captchaAutoSolve === true;
+    const passthrough = !enableAutoSolve || (req.query && (req.query.nosolve === '1' || req.query.passthrough === '1'));
+    let autoSolved = passthrough ? '(PURE PASSTHROUGH — mobile x/y unchanged)' : '';
     let originalReq = { x: body.x, y: body.y };
 
-    // CACHED SERVER-SIDE VERIFY: if /new already verified upstream-side in same lambda,
-    // return that cached result directly (bypasses Vercel egress-IP changing between requests).
+    // CACHED SERVER-SIDE VERIFY (only when auto-solve enabled): if /new already verified
+    // upstream-side in same lambda, return cached result.
     if (inKey && !passthrough) {
       const cached = await getCaptchaVerifyResult(inKey);
       if (cached.result) {
@@ -2418,8 +2424,6 @@ app.post('/app/captcha/verify', async (req, res) => {
       } else {
         autoSolved = `(no stored answer; lookup=${got.where} key=${inKey.substring(0,12)}...)`;
       }
-    } else if (passthrough) {
-      autoSolved = '(PASSTHROUGH — using user x/y as-is)';
     }
 
     // Capture FORWARDED request headers (what proxy actually sends to upstream after stripping)
