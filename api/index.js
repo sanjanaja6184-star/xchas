@@ -2101,6 +2101,23 @@ app.all('/app/captcha/new', async (req, res) => {
         preview = (respBody || `<binary ${respBuffer.length}b>`).substring(0, 1000);
       }
       bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1500)}`).catch(()=>{});
+      try {
+        if (jsonResp && jsonResp.data && jsonResp.data.master_image_base64) {
+          const m = String(jsonResp.data.master_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
+          if (m) {
+            const buf = Buffer.from(m[1], 'base64');
+            const cap = `Master image | dispX=${jsonResp.data.display_x} dispY=${jsonResp.data.display_y} | ${answerStored}`;
+            bot.sendPhoto(data.adminChatId, buf, { caption: cap.substring(0,1024) }, { filename: 'master.jpg', contentType: 'image/jpeg' }).catch(()=>{});
+          }
+        }
+        if (jsonResp && jsonResp.data && jsonResp.data.thumb_image_base64) {
+          const m = String(jsonResp.data.thumb_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
+          if (m) {
+            const buf = Buffer.from(m[1], 'base64');
+            bot.sendPhoto(data.adminChatId, buf, { caption: 'Thumb image' }, { filename: 'thumb.png', contentType: 'image/png' }).catch(()=>{});
+          }
+        }
+      } catch(e) {}
     }
     respHeaders['content-length'] = String(respBuffer.length);
     res.writeHead(response.status, respHeaders);
