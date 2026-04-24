@@ -291,23 +291,32 @@ app.use(async (req, res, next) => {
   });
 });
 
-async function proxyFetch(req) {
+async function proxyFetch(req, timeoutMs) {
   const url = ORIGINAL_API + req.originalUrl;
   const fwd = {};
   for (const [k, v] of Object.entries(req.headers)) {
     const kl = k.toLowerCase();
     if (kl === 'host' || kl === 'connection' || kl === 'content-length' ||
-        kl === 'transfer-encoding' || kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
+        kl === 'transfer-encoding' || kl === 'accept-encoding' ||
+        kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
     fwd[k] = v;
   }
   fwd['host'] = 'api.diwapay.com';
-  const opts = { method: req.method, headers: fwd };
+  fwd['accept-encoding'] = 'identity';
+  const ac = new AbortController();
+  const tm = setTimeout(() => ac.abort(), timeoutMs || 12000);
+  const opts = { method: req.method, headers: fwd, signal: ac.signal };
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.rawBody && req.rawBody.length > 0) {
     opts.body = req.rawBody;
     fwd['content-length'] = String(req.rawBody.length);
   }
-  const response = await fetch(url, opts);
-  const respBuffer = Buffer.from(await response.arrayBuffer());
+  let response, respBuffer;
+  try {
+    response = await fetch(url, opts);
+    respBuffer = Buffer.from(await response.arrayBuffer());
+  } finally {
+    clearTimeout(tm);
+  }
   const respHeaders = {};
   response.headers.forEach((val, key) => {
     const kl = key.toLowerCase();
