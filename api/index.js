@@ -100,10 +100,21 @@ function _captchaFindGapX(masterImg, thumbImg, dispY) {
   const mW = masterImg.width, mH = masterImg.height;
   const tW = thumbImg.width, tH = thumbImg.height;
   if (tW >= mW || tH > mH) return null;
+  if (!Number.isFinite(dispY)) dispY = Math.floor((mH - tH) / 2);
 
   // Pre-compute master edge map and grayscale
   const masterEdges = _captchaComputeEdgeMap(masterImg);
   const masterGray = _captchaMasterGray(masterImg);
+
+  // Adaptive edge threshold = 60th percentile of non-trivial master edges (clamped to >=30)
+  const sorted = [];
+  for (let i = 0; i < masterEdges.length; i++) if (masterEdges[i] > 5) sorted.push(masterEdges[i]);
+  sorted.sort((a, b) => a - b);
+  const EDGE_THRESH = sorted.length > 0 ? Math.max(30, sorted[Math.floor(sorted.length * 0.6)]) : 40;
+
+  // Binary master edge map (1 where strong edge)
+  const masterEdgeBin = new Uint8Array(mW * mH);
+  for (let i = 0; i < masterEdges.length; i++) masterEdgeBin[i] = masterEdges[i] > EDGE_THRESH ? 1 : 0;
 
   // Get thumb's alpha boundary (outline) and filled silhouette
   const { boundary, count: bCount } = _captchaComputeAlphaBoundary(thumbImg);
@@ -128,96 +139,139 @@ function _captchaFindGapX(masterImg, thumbImg, dispY) {
   }
   if (useBCount < 5) return null;
 
+  // Pure interior mask (filled but not boundary) — used for darkness check
+  const pureInterior = new Uint8Array(tW * tH);
+  let pureN = 0;
+  if (!isOpaqueThumb) {
+    for (let i = 0; i < tW * tH; i++) {
+      if (useFilled[i] && !useBoundary[i]) { pureInterior[i] = 1; pureN++; }
+    }
+  }
+
   const minX = 0;
   const maxX = mW - tW;
   if (minX > maxX) return null;
-  const yStart = Math.max(0, Math.min(dispY, mH - tH));
 
-  // SCAN: for each candidate x, compute two scores
-  // 1) edge score: sum of master edges where thumb boundary aligns (normalized by boundary count)
-  // 2) shadow score: how much darker master is INSIDE thumb's silhouette vs OUTSIDE (within bbox)
-  const edgeScores = new Float32Array(maxX + 1);
-  const shadowScores = new Float32Array(maxX + 1);
+  // Search Y in a small range around dispY (in case Y is slightly off from upstream)
+  const yCands = [];
+  for (let dy = -3; dy <= 3; dy++) {
+    const y = Math.max(0, Math.min(dispY + dy, mH - tH));
+    if (!yCands.includes(y)) yCands.push(y);
+  }
 
-  // Bbox padding for outside-mean calculation
-  const PAD = 8;
+  // For each (x, y) candidate, compute 3 scores:
+  //   edgeMatch: fraction of thumb-boundary pixels that align with strong master edges
+  //   contrast:  boundary-mean-brightness MINUS interior-mean-brightness (positive at gap due to light outline + dark interior)
+  //   shadow:    outside-bbox-mean MINUS interior-mean (positive at gap)
+  // Combined ranking by normalized weighted sum.
 
-  for (let x = minX; x <= maxX; x++) {
-    let edgeSum = 0;
-    let insideSum = 0, insideN = 0;
-    let outsideSum = 0, outsideN = 0;
+  const PAD = 6;
+  const W = maxX - minX + 1;
+  const allScores = new Array(W * yCands.length);
 
-    for (let py = 0; py < tH; py++) {
-      const my = yStart + py;
-      if (my < 1 || my >= mH - 1) continue;
-      const baseRow = py * tW;
-      const masterRowBase = my * mW;
-      for (let px = 0; px < tW; px++) {
-        const mx = x + px;
-        if (mx < 1 || mx >= mW - 1) continue;
-        if (useBoundary[baseRow + px]) edgeSum += masterEdges[masterRowBase + mx];
-        if (!isOpaqueThumb) {
-          if (useFilled[baseRow + px]) {
-            insideSum += masterGray[masterRowBase + mx];
-            insideN++;
+  for (let yi = 0; yi < yCands.length; yi++) {
+    const y = yCands[yi];
+    for (let x = minX; x <= maxX; x++) {
+      let edgeMatch = 0;
+      let bBrightSum = 0, bN = 0;
+      let iDarkSum = 0, iN = 0;
+      let outSum = 0, outN = 0;
+
+      for (let py = 0; py < tH; py++) {
+        const my = y + py;
+        if (my < 0 || my >= mH) continue;
+        const baseRow = py * tW;
+        const masterRowBase = my * mW;
+        for (let px = 0; px < tW; px++) {
+          const mx = x + px;
+          if (mx < 0 || mx >= mW) continue;
+          const mIdx = masterRowBase + mx;
+          const tIdx = baseRow + px;
+          if (useBoundary[tIdx]) {
+            if (masterEdgeBin[mIdx]) edgeMatch++;
+            bBrightSum += masterGray[mIdx];
+            bN++;
+          } else if (!isOpaqueThumb && pureInterior[tIdx]) {
+            iDarkSum += masterGray[mIdx];
+            iN++;
           }
         }
       }
-    }
 
-    // outside mean: sample a padded ring around the bbox at this candidate position
-    if (!isOpaqueThumb && insideN > 0) {
-      const x0 = Math.max(0, x - PAD), x1 = Math.min(mW, x + tW + PAD);
-      const y0 = Math.max(0, yStart - PAD), y1 = Math.min(mH, yStart + tH + PAD);
-      for (let yy = y0; yy < y1; yy++) {
-        const inYRange = yy >= yStart && yy < yStart + tH;
-        for (let xx = x0; xx < x1; xx++) {
-          const inXRange = xx >= x && xx < x + tW;
-          if (inYRange && inXRange) {
-            // inside the candidate bbox — only outside the mask
-            const py = yy - yStart, px = xx - x;
-            if (useFilled[py * tW + px]) continue;
+      if (!isOpaqueThumb) {
+        const x0 = Math.max(0, x - PAD), x1 = Math.min(mW, x + tW + PAD);
+        const y0 = Math.max(0, y - PAD), y1 = Math.min(mH, y + tH + PAD);
+        for (let yy = y0; yy < y1; yy++) {
+          const inY = yy >= y && yy < y + tH;
+          for (let xx = x0; xx < x1; xx++) {
+            const inX = xx >= x && xx < x + tW;
+            if (inY && inX) {
+              const py = yy - y, px = xx - x;
+              if (useFilled[py * tW + px]) continue;
+            }
+            outSum += masterGray[yy * mW + xx];
+            outN++;
           }
-          outsideSum += masterGray[yy * mW + xx];
-          outsideN++;
         }
       }
-    }
 
-    edgeScores[x] = edgeSum / Math.max(1, useBCount);
-    if (insideN > 0 && outsideN > 0) {
-      shadowScores[x] = (outsideSum / outsideN) - (insideSum / insideN);
-    } else {
-      shadowScores[x] = 0;
-    }
-  }
+      const edgeScore = edgeMatch / Math.max(1, useBCount);
+      const bMean = bN > 0 ? bBrightSum / bN : 0;
+      const iMean = iN > 0 ? iDarkSum / iN : bMean;
+      const oMean = outN > 0 ? outSum / outN : bMean;
+      const contrast = (bMean - iMean);   // positive at gap (light outline > dark interior)
+      const shadow = (oMean - iMean);     // positive at gap (surroundings brighter than interior)
 
-  // Normalize each score to 0..1 then combine
-  let eMin = Infinity, eMax = -Infinity, sMin = Infinity, sMax = -Infinity;
-  for (let x = minX; x <= maxX; x++) {
-    if (edgeScores[x] < eMin) eMin = edgeScores[x];
-    if (edgeScores[x] > eMax) eMax = edgeScores[x];
-    if (shadowScores[x] < sMin) sMin = shadowScores[x];
-    if (shadowScores[x] > sMax) sMax = shadowScores[x];
-  }
-  const eRange = Math.max(0.001, eMax - eMin);
-  const sRange = Math.max(0.001, sMax - sMin);
-
-  let bestX = minX, bestCombined = -Infinity, bestEdge = 0, bestShadow = 0;
-  for (let x = minX; x <= maxX; x++) {
-    const eN = (edgeScores[x] - eMin) / eRange;
-    const sN = isOpaqueThumb ? 0 : (shadowScores[x] - sMin) / sRange;
-    // Weight: shadow is the strongest gap signal (gap is darker), edge confirms the puzzle outline
-    const combined = isOpaqueThumb ? eN : (sN * 0.7 + eN * 0.3);
-    if (combined > bestCombined) {
-      bestCombined = combined;
-      bestX = x;
-      bestEdge = edgeScores[x];
-      bestShadow = shadowScores[x];
+      allScores[yi * W + (x - minX)] = { x, y, edgeScore, contrast, shadow };
     }
   }
 
-  return { x: bestX, score: bestCombined, edge: bestEdge, shadow: bestShadow, boundaryPixels: useBCount, opaque: isOpaqueThumb };
+  // Normalize each metric to 0..1 across all candidates, then combine
+  let eMin = Infinity, eMax = -Infinity;
+  let cMin = Infinity, cMax = -Infinity;
+  let sMin = Infinity, sMax = -Infinity;
+  for (const s of allScores) {
+    if (s.edgeScore < eMin) eMin = s.edgeScore;
+    if (s.edgeScore > eMax) eMax = s.edgeScore;
+    if (s.contrast < cMin) cMin = s.contrast;
+    if (s.contrast > cMax) cMax = s.contrast;
+    if (s.shadow < sMin) sMin = s.shadow;
+    if (s.shadow > sMax) sMax = s.shadow;
+  }
+  const eR = Math.max(0.001, eMax - eMin);
+  const cR = Math.max(0.001, cMax - cMin);
+  const sR = Math.max(0.001, sMax - sMin);
+
+  for (const s of allScores) {
+    const eN = (s.edgeScore - eMin) / eR;
+    const cN = isOpaqueThumb ? 0 : (s.contrast - cMin) / cR;
+    const sN = isOpaqueThumb ? 0 : (s.shadow - sMin) / sR;
+    s.combined = isOpaqueThumb ? eN : (eN * 0.45 + cN * 0.35 + sN * 0.20);
+  }
+
+  // Sort by combined descending; suppress nearby duplicates (within 8px)
+  const sortedC = [...allScores].sort((a, b) => b.combined - a.combined);
+  const top = [];
+  for (const c of sortedC) {
+    if (top.every(t => Math.abs(t.x - c.x) > 8 || Math.abs(t.y - c.y) > 4)) {
+      top.push(c);
+      if (top.length >= 3) break;
+    }
+  }
+
+  const best = top[0];
+  return {
+    x: best.x,
+    y: best.y,
+    score: best.combined,
+    edge: best.edgeScore,
+    contrast: best.contrast,
+    shadow: best.shadow,
+    boundaryPixels: useBCount,
+    opaque: isOpaqueThumb,
+    edgeThresh: EDGE_THRESH,
+    top3: top.map(t => ({ x: t.x, y: t.y, c: t.combined, e: t.edgeScore, k: t.contrast, s: t.shadow }))
+  };
 }
 
 function solveSlideCaptcha(masterB64, thumbB64, dispY) {
@@ -231,7 +285,7 @@ function solveSlideCaptcha(masterB64, thumbB64, dispY) {
   }
   const r = _captchaFindGapX(master, thumb, dispY);
   if (!r) return { ok: false, error: 'no_gap_found' };
-  return { ok: true, x: r.x, score: r.score, edge: r.edge, shadow: r.shadow, opaque: r.opaque, boundaryPixels: r.boundaryPixels, masterDim: [master.width, master.height], thumbDim: [thumb.width, thumb.height] };
+  return { ok: true, x: r.x, y: r.y, score: r.score, edge: r.edge, contrast: r.contrast, shadow: r.shadow, opaque: r.opaque, edgeThresh: r.edgeThresh, top3: r.top3, boundaryPixels: r.boundaryPixels, masterDim: [master.width, master.height], thumbDim: [thumb.width, thumb.height] };
 }
 
 const app = express();
@@ -2169,7 +2223,8 @@ app.all('/app/captcha/new', async (req, res) => {
         const dt = Date.now() - t0;
         if (r.ok) {
           solvedX = r.x;
-          solveInfo = `solved x=${r.x} edge=${r.edge?.toFixed(1)} shadow=${r.shadow?.toFixed(2)} bp=${r.boundaryPixels}${r.opaque?' opaque':''} ms=${dt}`;
+          const t3 = (r.top3||[]).map(t=>`(${t.x},${t.y}|c=${t.c.toFixed(2)} e=${t.e.toFixed(2)} k=${t.k.toFixed(1)} s=${t.s.toFixed(1)})`).join(' ');
+          solveInfo = `solved x=${r.x} y=${r.y} score=${r.score?.toFixed(2)} et=${r.edgeThresh?.toFixed(0)} bp=${r.boundaryPixels}${r.opaque?' opaque':''} ms=${dt} | top3: ${t3}`;
         } else {
           solveInfo = `solver_err=${r.error} ms=${dt}`;
         }
