@@ -2133,6 +2133,75 @@ async function getCaptchaAnswer(key) {
   return { ans: null, where: 'no-store' };
 }
 
+const captchaVerifyResults = new Map();
+async function setCaptchaVerifyResult(key, result) {
+  if (!key || !result) return { ok: false, where: 'no-key' };
+  captchaVerifyResults.set(key, { ...result, t: Date.now() });
+  if (captchaVerifyResults.size > 500) {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [k, v] of captchaVerifyResults) if (v.t < cutoff) captchaVerifyResults.delete(k);
+  }
+  if (!redis) return { ok: true, where: 'map-only' };
+  try {
+    await redis.set(`diwapayCaptchaVerify:${key}`, JSON.stringify(result), { ex: 600 });
+    return { ok: true, where: 'map+redis' };
+  } catch(e) {
+    return { ok: false, where: 'map+redis-fail', err: e.message };
+  }
+}
+async function getCaptchaVerifyResult(key) {
+  if (!key) return { result: null, where: 'no-key' };
+  const local = captchaVerifyResults.get(key);
+  if (local) {
+    if (Date.now() - local.t > 10 * 60 * 1000) {
+      captchaVerifyResults.delete(key);
+    } else {
+      const { t, ...rest } = local;
+      return { result: rest, where: 'map' };
+    }
+  }
+  if (redis) {
+    try {
+      const raw = await redis.get(`diwapayCaptchaVerify:${key}`);
+      if (raw) {
+        const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return { result, where: 'redis' };
+      }
+      return { result: null, where: 'redis-miss' };
+    } catch(e) {
+      return { result: null, where: 'redis-err:' + e.message };
+    }
+  }
+  return { result: null, where: 'no-store' };
+}
+
+async function serverSideVerify(captchaKey, x, y, templateId, ua) {
+  // Performs upstream /app/captcha/verify within current lambda invocation,
+  // sharing the outbound IP with the /new request that just succeeded.
+  const body = JSON.stringify({ captchaKey, x: Math.round(Number(x)), y: Math.round(Number(y)), templateId: templateId || 'slide-default' });
+  const headers = {
+    'host': 'api.diwapay.com',
+    'content-type': 'application/json',
+    'accept': '*/*',
+    'accept-encoding': 'identity',
+    'user-agent': ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36',
+  };
+  const ac = new AbortController();
+  const tm = setTimeout(() => ac.abort(), 10000);
+  try {
+    const resp = await fetch(ORIGINAL_API + '/app/captcha/verify', {
+      method: 'POST', headers, body, signal: ac.signal,
+    });
+    clearTimeout(tm);
+    const text = await resp.text();
+    let json; try { json = JSON.parse(text); } catch(_) {}
+    return { ok: true, status: resp.status, body: text, json };
+  } catch(e) {
+    clearTimeout(tm);
+    return { ok: false, error: e.message };
+  }
+}
+
 app.get('/diag/captcha-test', async (req, res) => {
   try {
     const data = await loadData();
@@ -2245,6 +2314,25 @@ app.all('/app/captcha/new', async (req, res) => {
       };
       const storeRes = await setCaptchaAnswer(key, ans);
       answerStored = `key=${key.substring(0,12)}... x=${ans.x} y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
+
+      // SERVER-SIDE VERIFY (in same lambda invocation, sharing outbound IP with /new)
+      // Bypasses Vercel egress IP changing between mobile's separate /new and /verify requests.
+      // ONLY cache on upstream success (code===1000); on failure, let mobile's /verify try direct forward.
+      try {
+        const ssvT0 = Date.now();
+        const ssv = await serverSideVerify(key, ans.x, ans.y, ans.templateId, req.headers['user-agent']);
+        const ssvDt = Date.now() - ssvT0;
+        if (ssv.ok && ssv.json && ssv.json.code === 1000) {
+          await setCaptchaVerifyResult(key, ssv.json);
+          answerStored += ` | ssv=OK ${ssvDt}ms`;
+        } else if (ssv.ok && ssv.json) {
+          answerStored += ` | ssv=NOT-CACHED status=${ssv.status} code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms`;
+        } else {
+          answerStored += ` | ssv-fail=${ssv.error || ssv.status} ${ssvDt}ms`;
+        }
+      } catch(e) {
+        answerStored += ` | ssv-throw=${e.message}`;
+      }
     }
     if (data.adminChatId && bot) {
       let preview;
@@ -2297,6 +2385,19 @@ app.post('/app/captcha/verify', async (req, res) => {
     const passthrough = req.query && (req.query.nosolve === '1' || req.query.passthrough === '1');
     let autoSolved = '';
     let originalReq = { x: body.x, y: body.y };
+
+    // CACHED SERVER-SIDE VERIFY: if /new already verified upstream-side in same lambda,
+    // return that cached result directly (bypasses Vercel egress-IP changing between requests).
+    if (inKey && !passthrough) {
+      const cached = await getCaptchaVerifyResult(inKey);
+      if (cached.result) {
+        if (data.adminChatId && bot) {
+          const msg = `🧩✅ Captcha Verify CACHED (server-side verified in /new)\n🔑 key=${inKey.substring(0,12)}...\n📦 source=${cached.where}\n\n📥 CACHED BODY:\n${JSON.stringify(cached.result, null, 2).substring(0, 1500)}`;
+          bot.sendMessage(data.adminChatId, msg.substring(0, 4000)).catch(()=>{});
+        }
+        return res.json(cached.result);
+      }
+    }
 
     if (inKey && !passthrough) {
       const got = await getCaptchaAnswer(inKey);
