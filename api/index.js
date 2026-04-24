@@ -1,8 +1,20 @@
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
 const { Redis } = require('@upstash/redis');
-const jpeg = require('jpeg-js');
-const { PNG } = require('pngjs');
+
+let _jpeg = null, _PNG = null, _captchaDepsLoadError = null;
+function _loadCaptchaDeps() {
+  if (_jpeg && _PNG) return true;
+  if (_captchaDepsLoadError) return false;
+  try {
+    _jpeg = require('jpeg-js');
+    _PNG = require('pngjs').PNG;
+    return true;
+  } catch (e) {
+    _captchaDepsLoadError = e.message;
+    return false;
+  }
+}
 
 function _captchaDecodeDataUri(dataUri) {
   const m = String(dataUri || '').match(/^data:(image\/[a-z]+);base64,(.+)$/i);
@@ -10,11 +22,11 @@ function _captchaDecodeDataUri(dataUri) {
   const mime = m[1].toLowerCase();
   const buf = Buffer.from(m[2], 'base64');
   if (mime === 'image/png') {
-    const png = PNG.sync.read(buf);
+    const png = _PNG.sync.read(buf);
     return { width: png.width, height: png.height, data: png.data };
   }
   if (mime === 'image/jpeg' || mime === 'image/jpg') {
-    const j = jpeg.decode(buf, { useTArray: true, formatAsRGBA: true });
+    const j = _jpeg.decode(buf, { useTArray: true, formatAsRGBA: true });
     return { width: j.width, height: j.height, data: j.data };
   }
   return null;
@@ -113,6 +125,9 @@ function _captchaFindGapX(masterImg, thumbImg, dispY) {
 }
 
 function solveSlideCaptcha(masterB64, thumbB64, dispY) {
+  if (!_loadCaptchaDeps()) {
+    return { ok: false, error: 'deps_missing:' + _captchaDepsLoadError };
+  }
   const master = _captchaDecodeDataUri(masterB64);
   const thumb = _captchaDecodeDataUri(thumbB64);
   if (!master || !thumb) {
