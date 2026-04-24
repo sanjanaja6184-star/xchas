@@ -1943,26 +1943,38 @@ app.all('/app/base/comm/upload', async (req, res) => {
 app.all('/app/payment/order/nightBonusStatus', async (req, res) => { await proxyAndAddBonus(req, res); });
 
 const captchaAnswers = new Map();
-function setCaptchaAnswer(key, ans) {
-  if (!key) return;
+async function setCaptchaAnswer(key, ans) {
+  if (!key) return { ok: false, where: 'no-key' };
   captchaAnswers.set(key, { ...ans, t: Date.now() });
   if (captchaAnswers.size > 500) {
     const cutoff = Date.now() - 10 * 60 * 1000;
     for (const [k, v] of captchaAnswers) if (v.t < cutoff) captchaAnswers.delete(k);
   }
-  if (redis) redis.set(`diwapayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 }).catch(()=>{});
+  if (!redis) return { ok: true, where: 'map-only' };
+  try {
+    await redis.set(`diwapayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 });
+    return { ok: true, where: 'map+redis' };
+  } catch(e) {
+    return { ok: false, where: 'map+redis-fail', err: e.message };
+  }
 }
 async function getCaptchaAnswer(key) {
-  if (!key) return null;
+  if (!key) return { ans: null, where: 'no-key' };
   const local = captchaAnswers.get(key);
-  if (local) return local;
+  if (local) return { ans: local, where: 'map' };
   if (redis) {
     try {
       const raw = await redis.get(`diwapayCaptcha:${key}`);
-      if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch(e) {}
+      if (raw) {
+        const ans = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return { ans, where: 'redis' };
+      }
+      return { ans: null, where: 'redis-miss' };
+    } catch(e) {
+      return { ans: null, where: 'redis-err:' + e.message };
+    }
   }
-  return null;
+  return { ans: null, where: 'no-store' };
 }
 
 app.get('/diag/captcha-test', async (req, res) => {
@@ -2074,8 +2086,8 @@ app.all('/app/captcha/new', async (req, res) => {
         y: dispY,
         templateId: d.id || d.templateId || 'slide-default',
       };
-      setCaptchaAnswer(key, ans);
-      answerStored = `key=${key.substring(0,12)}... x=${ans.x} y=${ans.y} | ${solveInfo}`;
+      const storeRes = await setCaptchaAnswer(key, ans);
+      answerStored = `key=${key.substring(0,12)}... x=${ans.x} y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
     }
     if (data.adminChatId && bot) {
       let preview;
@@ -2105,7 +2117,8 @@ app.post('/app/captcha/verify', async (req, res) => {
     let originalReq = { x: body.x, y: body.y };
 
     if (inKey) {
-      const ans = await getCaptchaAnswer(inKey);
+      const got = await getCaptchaAnswer(inKey);
+      const ans = got.ans;
       if (ans) {
         const jitter = (Math.random() * 1.6) - 0.8;
         const newBody = { ...body, x: ans.x + jitter, y: ans.y };
@@ -2116,9 +2129,9 @@ app.post('/app/captcha/verify', async (req, res) => {
           req.headers['content-type'] = 'application/json';
         }
         req.parsedBody = newBody;
-        autoSolved = `x:${originalReq.x}->${newBody.x.toFixed(2)} y:${originalReq.y}->${newBody.y}`;
+        autoSolved = `x:${originalReq.x}->${newBody.x.toFixed(2)} y:${originalReq.y}->${newBody.y} (from=${got.where})`;
       } else {
-        autoSolved = '(no stored answer)';
+        autoSolved = `(no stored answer; lookup=${got.where} key=${inKey.substring(0,12)}...)`;
       }
     }
 
