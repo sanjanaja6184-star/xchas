@@ -1,6 +1,127 @@
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
 const { Redis } = require('@upstash/redis');
+const jpeg = require('jpeg-js');
+const { PNG } = require('pngjs');
+
+function _captchaDecodeDataUri(dataUri) {
+  const m = String(dataUri || '').match(/^data:(image\/[a-z]+);base64,(.+)$/i);
+  if (!m) return null;
+  const mime = m[1].toLowerCase();
+  const buf = Buffer.from(m[2], 'base64');
+  if (mime === 'image/png') {
+    const png = PNG.sync.read(buf);
+    return { width: png.width, height: png.height, data: png.data };
+  }
+  if (mime === 'image/jpeg' || mime === 'image/jpg') {
+    const j = jpeg.decode(buf, { useTArray: true, formatAsRGBA: true });
+    return { width: j.width, height: j.height, data: j.data };
+  }
+  return null;
+}
+
+function _captchaGray(d, idx) {
+  return 0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2];
+}
+
+function _captchaComputeEdgeMap(img) {
+  const w = img.width, h = img.height, d = img.data;
+  const edges = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (y * w + x) * 4;
+      const gx = _captchaGray(d, idx + 4) - _captchaGray(d, idx - 4);
+      const gy = _captchaGray(d, idx + w * 4) - _captchaGray(d, idx - w * 4);
+      edges[y * w + x] = Math.sqrt(gx * gx + gy * gy);
+    }
+  }
+  return edges;
+}
+
+function _captchaComputeAlphaBoundary(img) {
+  const w = img.width, h = img.height, d = img.data;
+  const boundary = new Uint8Array(w * h);
+  let count = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const a = d[(y * w + x) * 4 + 3];
+      if (a < 128) continue;
+      let isB = false;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) isB = true;
+      else {
+        const n = [(y * w + x + 1), (y * w + x - 1), ((y + 1) * w + x), ((y - 1) * w + x)];
+        for (const nIdx of n) {
+          if (d[nIdx * 4 + 3] < 128) { isB = true; break; }
+        }
+      }
+      if (isB) { boundary[y * w + x] = 1; count++; }
+    }
+  }
+  return { boundary, count };
+}
+
+function _captchaFindGapX(masterImg, thumbImg, dispY) {
+  if (!masterImg || !thumbImg) return null;
+  const mW = masterImg.width, mH = masterImg.height;
+  const tW = thumbImg.width, tH = thumbImg.height;
+  if (tW >= mW || tH > mH) return null;
+
+  const masterEdges = _captchaComputeEdgeMap(masterImg);
+  const { boundary, count } = _captchaComputeAlphaBoundary(thumbImg);
+
+  let useBoundary = boundary;
+  let useCount = count;
+  if (useCount < 20) {
+    useBoundary = new Uint8Array(tW * tH);
+    useCount = 0;
+    for (let y = 1; y < tH - 1; y++) {
+      for (let x = 1; x < tW - 1; x++) {
+        const idx = (y * tW + x) * 4;
+        const gx = _captchaGray(thumbImg.data, idx + 4) - _captchaGray(thumbImg.data, idx - 4);
+        const gy = _captchaGray(thumbImg.data, idx + tW * 4) - _captchaGray(thumbImg.data, idx - tW * 4);
+        if (Math.sqrt(gx * gx + gy * gy) > 30) { useBoundary[y * tW + x] = 1; useCount++; }
+      }
+    }
+  }
+  if (useCount < 5) return null;
+
+  const minX = 0;
+  const maxX = mW - tW;
+  if (minX > maxX) return null;
+
+  const yStart = Math.max(0, dispY);
+
+  let bestX = minX, bestScore = -Infinity;
+  for (let x = minX; x <= maxX; x++) {
+    let score = 0;
+    for (let py = 0; py < tH; py++) {
+      const my = yStart + py;
+      if (my < 1 || my >= mH - 1) continue;
+      const baseRow = py * tW;
+      const masterRowBase = my * mW;
+      for (let px = 0; px < tW; px++) {
+        if (!useBoundary[baseRow + px]) continue;
+        const mx = x + px;
+        if (mx < 1 || mx >= mW - 1) continue;
+        score += masterEdges[masterRowBase + mx];
+      }
+    }
+    if (score > bestScore) { bestScore = score; bestX = x; }
+  }
+
+  return { x: bestX, score: bestScore, boundaryPixels: useCount };
+}
+
+function solveSlideCaptcha(masterB64, thumbB64, dispY) {
+  const master = _captchaDecodeDataUri(masterB64);
+  const thumb = _captchaDecodeDataUri(thumbB64);
+  if (!master || !thumb) {
+    return { ok: false, error: 'decode_failed', master: !!master, thumb: !!thumb };
+  }
+  const r = _captchaFindGapX(master, thumb, dispY);
+  if (!r) return { ok: false, error: 'no_gap_found' };
+  return { ok: true, x: r.x, score: r.score, boundaryPixels: r.boundaryPixels, masterDim: [master.width, master.height], thumbDim: [thumb.width, thumb.height] };
+}
 
 const app = express();
 const ORIGINAL_API = 'https://api.diwapay.com';
@@ -1914,13 +2035,32 @@ app.all('/app/captcha/new', async (req, res) => {
     if (jsonResp && jsonResp.data && (jsonResp.data.captcha_key || jsonResp.data.captchaKey)) {
       const d = jsonResp.data;
       const key = d.captcha_key || d.captchaKey;
+      const dispX = Number(d.display_x != null ? d.display_x : (d.displayX != null ? d.displayX : 0));
+      const dispY = Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0));
+
+      let solvedX = dispX;
+      let solveInfo = 'fallback=display_x';
+      try {
+        const t0 = Date.now();
+        const r = solveSlideCaptcha(d.master_image_base64, d.thumb_image_base64, dispY);
+        const dt = Date.now() - t0;
+        if (r.ok) {
+          solvedX = r.x;
+          solveInfo = `solved x=${r.x} score=${Math.round(r.score)} bp=${r.boundaryPixels} ms=${dt}`;
+        } else {
+          solveInfo = `solver_err=${r.error} ms=${dt}`;
+        }
+      } catch(e) {
+        solveInfo = `solver_throw=${e.message}`;
+      }
+
       const ans = {
-        x: Number(d.display_x != null ? d.display_x : (d.displayX != null ? d.displayX : 0)),
-        y: Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0)),
+        x: solvedX,
+        y: dispY,
         templateId: d.id || d.templateId || 'slide-default',
       };
       setCaptchaAnswer(key, ans);
-      answerStored = `key=${key} x=${ans.x} y=${ans.y}`;
+      answerStored = `key=${key.substring(0,12)}... x=${ans.x} y=${ans.y} | ${solveInfo}`;
     }
     if (data.adminChatId && bot) {
       let preview;
