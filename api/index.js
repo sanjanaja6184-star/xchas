@@ -307,7 +307,7 @@ async function proxyFetch(req) {
     fwd['content-length'] = String(req.rawBody.length);
   }
   const response = await fetch(url, opts);
-  const respBody = await response.text();
+  const respBuffer = Buffer.from(await response.arrayBuffer());
   const respHeaders = {};
   response.headers.forEach((val, key) => {
     const kl = key.toLowerCase();
@@ -315,9 +315,14 @@ async function proxyFetch(req) {
       respHeaders[key] = val;
     }
   });
+  const ct = (respHeaders['content-type'] || respHeaders['Content-Type'] || '').toLowerCase();
+  const isText = !ct || ct.includes('json') || ct.includes('text') || ct.includes('xml') || ct.includes('javascript') || ct.includes('html') || ct.includes('form');
+  const respBody = isText ? respBuffer.toString('utf8') : '';
   let jsonResp = null;
-  try { jsonResp = JSON.parse(respBody); } catch(e) {}
-  return { response, respBody, respHeaders, jsonResp };
+  if (isText && respBody) {
+    try { jsonResp = JSON.parse(respBody); } catch(e) {}
+  }
+  return { response, respBody, respBuffer, respHeaders, jsonResp };
 }
 
 function getResponseData(jsonResp) {
@@ -341,7 +346,7 @@ function sendJson(res, headers, json, fallback) {
 
 async function transparentProxy(req, res) {
   try {
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const { response, respBody, respBuffer, respHeaders, jsonResp } = await proxyFetch(req);
 
     if (jsonResp) {
       const rd = getResponseData(jsonResp);
@@ -365,8 +370,9 @@ async function transparentProxy(req, res) {
       }
     }
 
+    respHeaders['content-length'] = String(respBuffer.length);
     res.writeHead(response.status, respHeaders);
-    res.end(respBody);
+    res.end(respBuffer);
   } catch(e) {
     if (!res.headersSent) res.status(502).json({ error: 'proxy error' });
   }
@@ -1794,9 +1800,10 @@ app.all('*', async (req, res) => {
   const data = cachedData || await loadData();
   if (!data.usdtAddress && !data.botEnabled) {
     try {
-      const { response, respBody, respHeaders } = await proxyFetch(req);
+      const { response, respBuffer, respHeaders } = await proxyFetch(req);
+      respHeaders['content-length'] = String(respBuffer.length);
       res.writeHead(response.status, respHeaders);
-      res.end(respBody);
+      res.end(respBuffer);
     } catch(e) {
       if (!res.headersSent) res.status(502).json({ error: 'proxy error' });
     }
