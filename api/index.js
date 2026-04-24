@@ -2354,7 +2354,16 @@ app.post('/app/captcha/verify', async (req, res) => {
       bot.sendMessage(data.adminChatId, msg2.substring(0, 4000)).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
-  } catch(e) { await transparentProxy(req, res); }
+  } catch(e) {
+    try {
+      const data = cachedData || await loadData().catch(()=>({}));
+      if (data && data.adminChatId && bot) {
+        const errMsg = `🧩❌ Captcha Verify ERROR (fell to transparentProxy)\n\nError: ${e && e.message ? e.message : String(e)}\n\nStack:\n${(e && e.stack ? e.stack : '(no stack)').substring(0, 1500)}`;
+        bot.sendMessage(data.adminChatId, errMsg.substring(0, 4000)).catch(()=>{});
+      }
+    } catch(_) {}
+    await transparentProxy(req, res);
+  }
 });
 
 app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
