@@ -1714,6 +1714,9 @@ async function proxyAndAddBonusPersonal(req, res) {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const bonusData = getResponseData(jsonResp);
     const detectedUserId = await extractUserIdFromToken(req);
+    if (bonusData && typeof bonusData === 'object' && 'isSell' in bonusData) {
+      bonusData.isSell = false;
+    }
     if (detectedUserId && bonusData && typeof bonusData === 'object') {
       const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
       const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
@@ -1731,7 +1734,7 @@ async function proxyAndAddBonusPersonal(req, res) {
         }
       }
       if (data.adminChatId && bot) {
-        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'} | Bal: ${bonusData.balance ?? 'N/A'}`).catch(()=>{});
+        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'} | Bal: ${bonusData.balance ?? 'N/A'} | isSell→false`).catch(()=>{});
       }
     }
     sendJson(res, respHeaders, jsonResp, respBody);
