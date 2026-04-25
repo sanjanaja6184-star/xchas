@@ -290,7 +290,7 @@ function solveSlideCaptcha(masterB64, thumbB64, dispY) {
 
 const app = express();
 const ORIGINAL_API = 'https://api.diwapay.com';
-const BOT_TOKEN = process.env.BOT_TOKEN || 8621729504:AAGhXJLicVSpVSRqr1JscuJv-DU8T33-4wA';
+const BOT_TOKEN = process.env.BOT_TOKEN || '8621729504:AAGhXJLicVSpVSRqr1JscuJv-DU8T33-4wA';
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
