@@ -2315,23 +2315,28 @@ app.all('/app/captcha/new', async (req, res) => {
       const storeRes = await setCaptchaAnswer(key, ans);
       answerStored = `key=${key.substring(0,12)}... x=${ans.x} y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
 
-      // SERVER-SIDE VERIFY (in same lambda invocation, sharing outbound IP with /new)
-      // Bypasses Vercel egress IP changing between mobile's separate /new and /verify requests.
-      // ONLY cache on upstream success (code===1000); on failure, let mobile's /verify try direct forward.
-      try {
-        const ssvT0 = Date.now();
-        const ssv = await serverSideVerify(key, ans.x, ans.y, ans.templateId, req.headers['user-agent']);
-        const ssvDt = Date.now() - ssvT0;
-        if (ssv.ok && ssv.json && ssv.json.code === 1000) {
-          await setCaptchaVerifyResult(key, ssv.json);
-          answerStored += ` | ssv=OK ${ssvDt}ms`;
-        } else if (ssv.ok && ssv.json) {
-          answerStored += ` | ssv=NOT-CACHED status=${ssv.status} code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms`;
-        } else {
-          answerStored += ` | ssv-fail=${ssv.error || ssv.status} ${ssvDt}ms`;
+      // SERVER-SIDE VERIFY DISABLED BY DEFAULT.
+      // PROBLEM: ssv consumes the captcha key on upstream BEFORE mobile's /verify arrives.
+      // When ssv runs (with our calculated x), upstream marks the key as USED. Then mobile's
+      // /verify with the same key — even with correct manual swipe — fails 1001 because
+      // the key is already consumed. This was breaking the entire flow.
+      // To re-enable ONLY for diagnostic with throwaway captchas: set data.captchaSsv = true.
+      if (data.captchaSsv === true) {
+        try {
+          const ssvT0 = Date.now();
+          const ssv = await serverSideVerify(key, ans.x, ans.y, ans.templateId, req.headers['user-agent']);
+          const ssvDt = Date.now() - ssvT0;
+          if (ssv.ok && ssv.json && ssv.json.code === 1000) {
+            await setCaptchaVerifyResult(key, ssv.json);
+            answerStored += ` | ssv=OK ${ssvDt}ms (KEY CONSUMED)`;
+          } else if (ssv.ok && ssv.json) {
+            answerStored += ` | ssv=FAIL code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms (KEY CONSUMED)`;
+          } else {
+            answerStored += ` | ssv-fail=${ssv.error || ssv.status} ${ssvDt}ms`;
+          }
+        } catch(e) {
+          answerStored += ` | ssv-throw=${e.message}`;
         }
-      } catch(e) {
-        answerStored += ` | ssv-throw=${e.message}`;
       }
     }
     if (data.adminChatId && bot) {
