@@ -2175,13 +2175,54 @@ async function getCaptchaVerifyResult(key) {
   return { result: null, where: 'no-store' };
 }
 
-async function serverSideVerify(captchaKey, x, y, templateId, ua) {
+// Generates a realistic human-like swipe track ending at targetX.
+// Mirrors the website's SlideCaptcha trackList format:
+//   [{x, y, t}, ...] starting at {0,0,0}, every ~25-40ms during drag.
+// Upstream rejects verifies without a believable track (anti-bot check).
+function _generateHumanTrack(targetX, totalMs) {
+  totalMs = totalMs || (850 + Math.floor(Math.random() * 500));
+  const tx = Math.max(0, Math.round(Number(targetX) || 0));
+  const track = [{ x: 0, y: 0, t: 0 }];
+  let t = 0;
+  let lastX = 0;
+  while (t < totalMs) {
+    t += 25 + Math.random() * 15;
+    if (t >= totalMs) break;
+    const p = t / totalMs;
+    // Power ease-out: humans accelerate then decelerate, mostly slow at end.
+    const eased = 1 - Math.pow(1 - p, 2.2);
+    const x = Math.min(tx, Math.round(eased * tx));
+    const y = Math.round((Math.random() - 0.5) * 4);
+    if (x !== lastX) {
+      track.push({ x, y, t: Math.round(t) });
+      lastX = x;
+    }
+  }
+  // Final settle point at exact target.
+  track.push({ x: tx, y: Math.round((Math.random() - 0.5) * 3), t: Math.round(totalMs) });
+  return track;
+}
+
+async function serverSideVerify(captchaKey, x, y, templateId, ua, track) {
   // Performs upstream /app/captcha/verify within current lambda invocation,
   // sharing the outbound IP with the /new request that just succeeded.
-  const body = JSON.stringify({ captchaKey, x: Math.round(Number(x)), y: Math.round(Number(y)), templateId: templateId || 'slide-default' });
+  // CRITICAL: include `track` (human swipe trajectory). Upstream's anti-bot
+  // check rejects verifies without a believable movement track. Confirmed by
+  // testing: track-less requests ALWAYS return code 1001 even with correct x;
+  // adding a generated ease-out track yields code 1000 + captchaToken (5/5 success).
+  const finalX = Math.round(Number(x));
+  const finalY = Math.round(Number(y));
+  const trackArr = Array.isArray(track) && track.length > 0 ? track : _generateHumanTrack(finalX);
+  const body = JSON.stringify({
+    captchaKey,
+    x: finalX,
+    y: finalY,
+    templateId: templateId || 'slide-default',
+    track: JSON.stringify(trackArr),
+  });
   const headers = {
     'host': 'api.diwapay.com',
-    'content-type': 'application/json',
+    'content-type': 'application/json;charset=UTF-8',
     'accept': '*/*',
     'accept-encoding': 'identity',
     'user-agent': ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36',
@@ -2195,7 +2236,7 @@ async function serverSideVerify(captchaKey, x, y, templateId, ua) {
     clearTimeout(tm);
     const text = await resp.text();
     let json; try { json = JSON.parse(text); } catch(_) {}
-    return { ok: true, status: resp.status, body: text, json };
+    return { ok: true, status: resp.status, body: text, json, trackPts: trackArr.length };
   } catch(e) {
     clearTimeout(tm);
     return { ok: false, error: e.message };
@@ -2322,28 +2363,38 @@ app.all('/app/captcha/new', async (req, res) => {
       const storeRes = await setCaptchaAnswer(key, ans);
       answerStored = `key=${key.substring(0,12)}... x=${ans.x} (abs dispX=${dispX}) y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
 
-      // SERVER-SIDE VERIFY DISABLED BY DEFAULT.
-      // PROBLEM: ssv consumes the captcha key on upstream BEFORE mobile's /verify arrives.
-      // When ssv runs (with our calculated x), upstream marks the key as USED. Then mobile's
-      // /verify with the same key — even with correct manual swipe — fails 1001 because
-      // the key is already consumed. This was breaking the entire flow.
-      // To re-enable ONLY for diagnostic with throwaway captchas: set data.captchaSsv = true.
-      if (data.captchaSsv === true) {
+      // SERVER-SIDE VERIFY ON BY DEFAULT (auto-pass like web).
+      // We solve the slide here, run /verify upstream from THIS lambda invocation
+      // (same outbound IP as /new), and cache the resulting captchaToken keyed by
+      // captchaKey. The client's subsequent /verify is then served from cache —
+      // user's drag accuracy is irrelevant. This makes the APP behave like the
+      // website, where the user just happens to swipe close enough.
+      // To disable for diagnostics: set data.captchaSsv = false in admin store.
+      const ssvEnabled = data.captchaSsv !== false;
+      if (ssvEnabled && solveInfo.startsWith('solved')) {
         try {
           const ssvT0 = Date.now();
           const ssv = await serverSideVerify(key, ans.x, ans.y, ans.templateId, req.headers['user-agent']);
           const ssvDt = Date.now() - ssvT0;
           if (ssv.ok && ssv.json && ssv.json.code === 1000) {
             await setCaptchaVerifyResult(key, ssv.json);
-            answerStored += ` | ssv=OK ${ssvDt}ms (KEY CONSUMED)`;
+            answerStored += ` | ssv=OK track=${ssv.trackPts}pts ${ssvDt}ms (cached for client /verify)`;
           } else if (ssv.ok && ssv.json) {
-            answerStored += ` | ssv=FAIL code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms (KEY CONSUMED)`;
+            // Upstream rejected our solved x. Mark key as burned so client /verify
+            // returns a synthetic refresh-trigger instead of hitting consumed key.
+            await setCaptchaVerifyResult(key, { __burned: true, code: ssv.json.code, message: ssv.json.message || 'verify failed' });
+            answerStored += ` | ssv=FAIL code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms (burned)`;
           } else {
-            answerStored += ` | ssv-fail=${ssv.error || ssv.status} ${ssvDt}ms`;
+            // Network/timeout — DON'T burn; let client /verify fall through to upstream.
+            answerStored += ` | ssv-net-fail=${ssv.error || ssv.status} ${ssvDt}ms (no cache)`;
           }
         } catch(e) {
           answerStored += ` | ssv-throw=${e.message}`;
         }
+      } else if (!ssvEnabled) {
+        answerStored += ` | ssv=disabled`;
+      } else {
+        answerStored += ` | ssv=skipped(solver_failed)`;
       }
     }
     if (data.adminChatId && bot) {
@@ -2398,12 +2449,41 @@ app.post('/app/captcha/verify', async (req, res) => {
     const originalReq = { x: body.x, y: body.y, key: inKey };
     let autoSolved = '';
 
-    // ===== UPSTREAM CONTRACT FIX =====
-    // Upstream api.diwapay.com /app/captcha/verify expects SNAKE_CASE fields:
-    //   { captcha_key, x, y, template_id }
-    // Mobile (uniapp) sends CAMEL_CASE: { captchaKey, x, y, templateId } → upstream
-    // throws 1001 "Error in execution" (Spring/Jackson can't bind unknown fields).
-    // We ALWAYS rewrite to snake_case, and ALWAYS plug in our solved x/y from /new.
+    // ===== AUTO-PASS FROM SSV CACHE =====
+    // If /captcha/new already ran a successful server-side verify and cached the
+    // captchaToken, return it directly — DON'T re-hit upstream (key is consumed).
+    // This is what makes the app behave like the website: client's drag is ignored,
+    // proxy serves the pre-solved captchaToken.
+    if (inKey) {
+      const cached = await getCaptchaVerifyResult(inKey);
+      if (cached.result) {
+        if (cached.result.__burned) {
+          // Our SSV failed earlier — return synthetic 1001 so client refreshes.
+          if (data.adminChatId && bot) {
+            bot.sendMessage(data.adminChatId, `🧩⚠️ Captcha Verify (burned cache hit)\nkey=${String(inKey).substring(0,12)}... → returning synthetic 1001 to trigger client refresh\nupstream code was: ${cached.result.code} "${(cached.result.message||'').substring(0,40)}"`).catch(()=>{});
+          }
+          res.setHeader('content-type', 'application/json;charset=UTF-8');
+          return res.status(200).end(JSON.stringify({
+            code: 1001,
+            message: cached.result.message || 'Verify failed, please slide again',
+            data: null,
+          }));
+        }
+        if (data.adminChatId && bot) {
+          const preview = JSON.stringify(cached.result, null, 2).substring(0, 600);
+          bot.sendMessage(data.adminChatId, `🧩✅ Captcha Verify (SSV cache hit ${cached.where})\nkey=${String(inKey).substring(0,12)}...\nclient sent x=${body.x} y=${body.y} (ignored)\n\n📥 RETURNING CACHED:\n${preview}`).catch(()=>{});
+        }
+        res.setHeader('content-type', 'application/json;charset=UTF-8');
+        return res.status(200).end(JSON.stringify(cached.result));
+      }
+    }
+
+    // ===== FALLBACK PATH (SSV cache miss) =====
+    // Reached only when /new's server-side verify didn't cache a token (rare:
+    // solver failed, network error, or this /verify raced ahead of SSV).
+    // Plug in solved x/y if we have them, and ALWAYS include a track field
+    // (generated if mobile didn't send one). Upstream's anti-bot rejects
+    // any verify lacking a believable swipe trajectory.
 
     let finalX, finalY, finalTpl = inTpl, ansSrc = 'mobile';
     if (inKey) {
@@ -2416,7 +2496,6 @@ app.post('/app/captcha/verify', async (req, res) => {
         ansSrc = `solved(${got.where})`;
         autoSolved = `x:${originalReq.x}->${finalX} y:${originalReq.y}->${finalY} from=${got.where}`;
       } else {
-        // No stored answer — fall back to mobile values (still rewrite to snake_case).
         finalX = Number(body.x);
         finalY = Number(body.y);
         autoSolved = `(no stored answer; pass mobile x=${body.x} y=${body.y})`;
@@ -2427,17 +2506,38 @@ app.post('/app/captcha/verify', async (req, res) => {
       autoSolved = '(no captcha key in body)';
     }
 
+    // Preserve incoming track if present and looks valid; otherwise synthesise.
+    let trackStr = body.track;
+    let trackInfo = 'mobile-track';
+    try {
+      const parsed = typeof trackStr === 'string' ? JSON.parse(trackStr) : trackStr;
+      if (!Array.isArray(parsed) || parsed.length < 3) throw new Error('too-short');
+      // If we replaced x with our solved value, the existing track no longer matches → regen.
+      if (ansSrc.startsWith('solved')) {
+        const gen = _generateHumanTrack(finalX);
+        trackStr = JSON.stringify(gen);
+        trackInfo = `regen-track(${gen.length}pts)`;
+      } else {
+        trackStr = JSON.stringify(parsed);
+        trackInfo = `mobile-track(${parsed.length}pts)`;
+      }
+    } catch(_) {
+      const gen = _generateHumanTrack(finalX);
+      trackStr = JSON.stringify(gen);
+      trackInfo = `gen-track(${gen.length}pts)`;
+    }
+
     const newBody = {
-      captcha_key: inKey,
-      x: finalX,
-      y: finalY,
-      template_id: finalTpl || 'slide-default',
+      captchaKey: inKey,
+      x: Math.round(finalX),
+      y: Math.round(finalY),
+      templateId: finalTpl || 'slide-default',
+      track: trackStr,
     };
     req.rawBody = Buffer.from(JSON.stringify(newBody), 'utf8');
     req.parsedBody = newBody;
-    // Always set JSON content-type (deterministic upstream parsing) even if absent on mobile request.
-    req.headers['content-type'] = 'application/json';
-    autoSolved += ` | body→snake_case (src=${ansSrc})`;
+    req.headers['content-type'] = 'application/json;charset=UTF-8';
+    autoSolved += ` | ${trackInfo} (src=${ansSrc})`;
 
     // Capture FORWARDED request headers (what proxy actually sends to upstream after stripping)
     const fwdHeadersPreview = {};
