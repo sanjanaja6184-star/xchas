@@ -926,12 +926,16 @@ const DEBUG_HOME_PATHS = new Set([
   '/app/user/info/personV2',
   '/app/payment/order/history',
   '/app/payment/order/summary',
+  '/app/receive/order/history',
+  '/app/receive/order/summary',
+  '/app/mission/task',
   '/app/news/notice',
   '/app/app/content/page',
   '/app/base/param',
   '/app/app/version/info/getLatestAppVersion',
   '/app/app/popup/notice/currentList',
   '/app/app/official/service/getOfficialServiceData',
+  '/app/user/active/activeInfo',
 ]);
 app.use((req, res, next) => {
   try {
@@ -939,18 +943,25 @@ app.use((req, res, next) => {
     const path = (req.originalUrl || req.url || '').split('?')[0];
     if (!DEBUG_HOME_PATHS.has(path)) return next();
     const chunks = [];
+    let captured = 0;
+    const CAP = 64 * 1024;
+    const append = (chunk) => {
+      if (!chunk || captured >= CAP) return;
+      try {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const room = CAP - captured;
+        chunks.push(room >= buf.length ? buf : buf.slice(0, room));
+        captured += Math.min(room, buf.length);
+      } catch(e) {}
+    };
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
     res.write = function(chunk, ...args) {
-      if (chunk) {
-        try { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); } catch(e) {}
-      }
+      append(chunk);
       return origWrite(chunk, ...args);
     };
     res.end = function(chunk, ...args) {
-      if (chunk) {
-        try { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); } catch(e) {}
-      }
+      append(chunk);
       const result = origEnd(chunk, ...args);
       (async () => {
         try {
