@@ -2307,19 +2307,20 @@ app.all('/app/captcha/new', async (req, res) => {
         solveInfo = `solver_throw=${e.message}`;
       }
 
-      // FIX: upstream expects x = drag distance (handleX = gapAbsoluteX - dispX),
-      // NOT the absolute pixel X on the master image. Mobile app source:
-      //   maxX = boxW - tW (=240); verify({ x: handleX }) where handleX is drag dist.
-      const dragX = Math.max(0, Math.round(solvedX - dispX));
+      // Mobile's SlideCaptcha sets thumbStyle: `left: ${handleX}px` directly on the master
+      // image (boxW = master_width = 300). So handleX IS the thumb's master-image X position
+      // (absolute), NOT a drag-distance relative to dispX. Verified by passthrough capture
+      // showing mobile sending x≈absoluteGapX (e.g. 111.38 for gap at abs=110).
+      const absX = Math.max(0, Math.round(solvedX));
       const ans = {
-        x: dragX,
+        x: absX,
         y: dispY,
         absX: solvedX,
         dispX: dispX,
         templateId: d.id || d.templateId || 'slide-default',
       };
       const storeRes = await setCaptchaAnswer(key, ans);
-      answerStored = `key=${key.substring(0,12)}... drag=${ans.x} (abs=${solvedX} dispX=${dispX}) y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
+      answerStored = `key=${key.substring(0,12)}... x=${ans.x} (abs dispX=${dispX}) y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
 
       // SERVER-SIDE VERIFY DISABLED BY DEFAULT.
       // PROBLEM: ssv consumes the captcha key on upstream BEFORE mobile's /verify arrives.
@@ -2393,49 +2394,50 @@ app.post('/app/captcha/verify', async (req, res) => {
     const data = await loadData();
     const body = req.parsedBody || {};
     const inKey = body.captchaKey || body.captcha_key;
-    // AUTO-SOLVE is OPT-IN now. Default = PURE PASSTHROUGH (mobile's manual swipe goes through unmodified).
-    // Reason: server-side verify (same lambda) also returns 1001 with our calculated x, suggesting algorithm
-    // is finding decoys, not the real gap. Let user's manual swipe through to test.
-    // To re-enable auto-solve: add ?solve=1 to URL (or set data.captchaAutoSolve = true via admin).
-    const forceSolve = req.query && (req.query.solve === '1' || req.query.autosolve === '1');
-    const enableAutoSolve = forceSolve || data.captchaAutoSolve === true;
-    const passthrough = !enableAutoSolve || (req.query && (req.query.nosolve === '1' || req.query.passthrough === '1'));
-    let autoSolved = passthrough ? '(PURE PASSTHROUGH — mobile x/y unchanged)' : '';
-    let originalReq = { x: body.x, y: body.y };
+    const inTpl = body.templateId || body.template_id;
+    const originalReq = { x: body.x, y: body.y, key: inKey };
+    let autoSolved = '';
 
-    // CACHED SERVER-SIDE VERIFY (only when auto-solve enabled): if /new already verified
-    // upstream-side in same lambda, return cached result.
-    if (inKey && !passthrough) {
-      const cached = await getCaptchaVerifyResult(inKey);
-      if (cached.result) {
-        if (data.adminChatId && bot) {
-          const msg = `🧩✅ Captcha Verify CACHED (server-side verified in /new)\n🔑 key=${inKey.substring(0,12)}...\n📦 source=${cached.where}\n\n📥 CACHED BODY:\n${JSON.stringify(cached.result, null, 2).substring(0, 1500)}`;
-          bot.sendMessage(data.adminChatId, msg.substring(0, 4000)).catch(()=>{});
-        }
-        return res.json(cached.result);
-      }
-    }
+    // ===== UPSTREAM CONTRACT FIX =====
+    // Upstream api.diwapay.com /app/captcha/verify expects SNAKE_CASE fields:
+    //   { captcha_key, x, y, template_id }
+    // Mobile (uniapp) sends CAMEL_CASE: { captchaKey, x, y, templateId } → upstream
+    // throws 1001 "Error in execution" (Spring/Jackson can't bind unknown fields).
+    // We ALWAYS rewrite to snake_case, and ALWAYS plug in our solved x/y from /new.
 
-    if (inKey && !passthrough) {
+    let finalX, finalY, finalTpl = inTpl, ansSrc = 'mobile';
+    if (inKey) {
       const got = await getCaptchaAnswer(inKey);
       const ans = got.ans;
       if (ans) {
-        // Send INTEGER x (mobile app sends integer pixel coords; upstream may type-check)
-        const finalX = Math.round(Number(ans.x));
-        const finalY = Math.round(Number(ans.y));
-        const newBody = { ...body, x: finalX, y: finalY };
-        if (!newBody.templateId && ans.templateId) newBody.templateId = ans.templateId;
-        const newRaw = Buffer.from(JSON.stringify(newBody), 'utf8');
-        req.rawBody = newRaw;
-        if (req.headers['content-type'] && !/json/i.test(req.headers['content-type'])) {
-          req.headers['content-type'] = 'application/json';
-        }
-        req.parsedBody = newBody;
-        autoSolved = `x:${originalReq.x}->${finalX} y:${originalReq.y}->${finalY} (from=${got.where})`;
+        finalX = Math.round(Number(ans.x));
+        finalY = Math.round(Number(ans.y));
+        if (!finalTpl) finalTpl = ans.templateId;
+        ansSrc = `solved(${got.where})`;
+        autoSolved = `x:${originalReq.x}->${finalX} y:${originalReq.y}->${finalY} from=${got.where}`;
       } else {
-        autoSolved = `(no stored answer; lookup=${got.where} key=${inKey.substring(0,12)}...)`;
+        // No stored answer — fall back to mobile values (still rewrite to snake_case).
+        finalX = Number(body.x);
+        finalY = Number(body.y);
+        autoSolved = `(no stored answer; pass mobile x=${body.x} y=${body.y})`;
       }
+    } else {
+      finalX = Number(body.x);
+      finalY = Number(body.y);
+      autoSolved = '(no captcha key in body)';
     }
+
+    const newBody = {
+      captcha_key: inKey,
+      x: finalX,
+      y: finalY,
+      template_id: finalTpl || 'slide-default',
+    };
+    req.rawBody = Buffer.from(JSON.stringify(newBody), 'utf8');
+    req.parsedBody = newBody;
+    // Always set JSON content-type (deterministic upstream parsing) even if absent on mobile request.
+    req.headers['content-type'] = 'application/json';
+    autoSolved += ` | body→snake_case (src=${ansSrc})`;
 
     // Capture FORWARDED request headers (what proxy actually sends to upstream after stripping)
     const fwdHeadersPreview = {};
