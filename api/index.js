@@ -2202,6 +2202,72 @@ async function serverSideVerify(captchaKey, x, y, templateId, ua) {
   }
 }
 
+// Fetch a FRESH captcha from upstream (for retry purposes).
+async function fetchFreshCaptcha(ua) {
+  const headers = {
+    'host': 'api.diwapay.com',
+    'accept': '*/*',
+    'accept-encoding': 'identity',
+    'user-agent': ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36',
+  };
+  const ac = new AbortController();
+  const tm = setTimeout(() => ac.abort(), 10000);
+  try {
+    const resp = await fetch(ORIGINAL_API + '/app/captcha/new', { method: 'GET', headers, signal: ac.signal });
+    clearTimeout(tm);
+    const text = await resp.text();
+    let json; try { json = JSON.parse(text); } catch(_) {}
+    return { ok: true, status: resp.status, json };
+  } catch(e) {
+    clearTimeout(tm);
+    return { ok: false, error: e.message };
+  }
+}
+
+// AUTO-RETRY HELPER: when upstream returns 1001 for the user's verify, repeatedly
+// (1) fetch a fresh captcha, (2) solve it ourselves, (3) submit verify upstream.
+// Returns the FIRST successful upstream response (code===1000 with captchaToken),
+// or null if all attempts exhausted. Mobile only cares about the captchaToken to
+// pass to /login — the underlying captcha key is irrelevant to it.
+async function autoSolveRetry(ua, maxAttempts, deadlineMs) {
+  const attempts = [];
+  const deadline = deadlineMs || (Date.now() + 22000); // default 22s budget
+  for (let i = 1; i <= maxAttempts; i++) {
+    if (Date.now() >= deadline) {
+      attempts.push(`#${i}:budget-exceeded`);
+      break;
+    }
+    const t0 = Date.now();
+    const fresh = await fetchFreshCaptcha(ua);
+    if (!fresh.ok || !fresh.json || fresh.json.code !== 1000 || !fresh.json.data) {
+      attempts.push(`#${i}:new-fail(${fresh.error || (fresh.json && fresh.json.code) || '?'})`);
+      continue;
+    }
+    const d = fresh.json.data;
+    const key = d.captcha_key || d.captchaKey;
+    const dispY = Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0));
+    const tplId = d.id || d.templateId || 'slide-default';
+    let solvedX, score;
+    try {
+      const r = solveSlideCaptcha(d.master_image_base64, d.thumb_image_base64, dispY);
+      if (r.ok) { solvedX = r.x; score = r.score; }
+    } catch(_) {}
+    if (solvedX == null) {
+      attempts.push(`#${i}:solve-fail`);
+      continue;
+    }
+    const ssv = await serverSideVerify(key, solvedX, dispY, tplId, ua);
+    const dt = Date.now() - t0;
+    if (ssv.ok && ssv.json && ssv.json.code === 1000) {
+      attempts.push(`#${i}:OK x=${solvedX} y=${dispY} score=${score?.toFixed(2)} ${dt}ms`);
+      return { success: true, response: ssv.json, attempts, attemptsCount: i };
+    }
+    const code = ssv.json ? ssv.json.code : '?';
+    attempts.push(`#${i}:fail x=${solvedX} y=${dispY} score=${score?.toFixed(2)} code=${code} ${dt}ms`);
+  }
+  return { success: false, attempts, attemptsCount: attempts.length };
+}
+
 app.get('/diag/captcha-test', async (req, res) => {
   try {
     const data = await loadData();
@@ -2448,22 +2514,48 @@ app.post('/app/captcha/verify', async (req, res) => {
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
 
+    // AUTO-RETRY ON UPSTREAM 1001: Diwapay's verify endpoint is flaky and rejects
+    // ~70-80% of valid attempts (confirmed: same behavior in original Diwapay app —
+    // user has to manually retry 3-4 times). To shield mobile from this, when upstream
+    // returns 1001, silently fetch fresh captchas and self-solve them until upstream
+    // accepts (or maxAttempts reached). Mobile only needs the captchaToken in the end.
+    // ENABLED BY DEFAULT. To disable: data.captchaAutoRetry = false (admin) or ?noretry=1.
+    const autoRetryDisabled = (data.captchaAutoRetry === false) || (req.query && req.query.noretry === '1');
+    let finalJson = jsonResp, finalBody = respBody, finalHeaders = respHeaders, finalStatus = response.status;
+    let retrySummary = '';
+    if (!autoRetryDisabled && jsonResp && jsonResp.code === 1001) {
+      const rawN = Number.parseInt(req.query?.retry ?? data.captchaRetryAttempts ?? 6, 10);
+      const maxAttempts = Math.min(10, Math.max(1, Number.isFinite(rawN) ? rawN : 6));
+      const ua = req.headers['user-agent'];
+      const t0 = Date.now();
+      const deadline = t0 + 22000; // 22s budget keeps us safely under Vercel 30s
+      const retry = await autoSolveRetry(ua, maxAttempts, deadline);
+      const dt = Date.now() - t0;
+      retrySummary = `\n🔄 AUTO-RETRY (${retry.attemptsCount} attempts, ${dt}ms): ${retry.success ? '✅ SUCCESS' : '❌ all failed'}\n   ${retry.attempts.join('\n   ')}`;
+      if (retry.success) {
+        finalJson = retry.response;
+        finalBody = JSON.stringify(retry.response);
+        finalStatus = 200;
+        finalHeaders = { ...respHeaders, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(finalBody, 'utf8')) };
+      }
+    }
+
     if (data.adminChatId && bot) {
       const respHdrPreview = {};
-      for (const [k, v] of Object.entries(respHeaders)) {
+      for (const [k, v] of Object.entries(finalHeaders)) {
         const kl = k.toLowerCase();
         if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
           respHdrPreview[kl] = v;
         }
       }
       // Message 1: RESPONSE first (most important — was getting truncated)
-      const msg1 = `🧩 Captcha Verify RESPONSE\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📥 STATUS: ${response.status}\n📥 BODY:\n${(jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody).substring(0, 1500)}\n\n📥 HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 800)}`;
+      const msg1 = `🧩 Captcha Verify RESPONSE\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}${retrySummary}\n\n📥 STATUS: ${finalStatus}\n📥 BODY:\n${(finalJson ? JSON.stringify(finalJson, null, 2) : finalBody).substring(0, 1500)}\n\n📥 HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 800)}`;
       bot.sendMessage(data.adminChatId, msg1.substring(0, 4000)).catch(()=>{});
       // Message 2: REQUEST details (secondary)
       const msg2 = `🧩 Captcha Verify REQUEST\n📤 HEADERS sent to upstream:\n${JSON.stringify(fwdHeadersPreview, null, 2).substring(0, 1500)}\n\n📤 BODY sent:\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 800)}`;
       bot.sendMessage(data.adminChatId, msg2.substring(0, 4000)).catch(()=>{});
     }
-    sendJson(res, respHeaders, jsonResp, respBody);
+    sendJson(res, finalHeaders, finalJson, finalBody);
   } catch(e) {
     try {
       const data = cachedData || await loadData().catch(()=>({}));
