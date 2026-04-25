@@ -919,78 +919,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// 🔍 DiwaDebug: capture and forward home-page endpoint responses to admin
-const DEBUG_HOME_PATHS = new Set([
-  '/app/user/info',
-  '/app/user/info/person',
-  '/app/user/info/personV2',
-  '/app/payment/order/history',
-  '/app/payment/order/summary',
-  '/app/receive/order/history',
-  '/app/receive/order/summary',
-  '/app/mission/task',
-  '/app/news/notice',
-  '/app/app/content/page',
-  '/app/base/param',
-  '/app/app/version/info/getLatestAppVersion',
-  '/app/app/popup/notice/currentList',
-  '/app/app/official/service/getOfficialServiceData',
-  '/app/user/active/activeInfo',
-]);
-app.use((req, res, next) => {
-  try {
-    if (!bot) return next();
-    const path = (req.originalUrl || req.url || '').split('?')[0];
-    if (!DEBUG_HOME_PATHS.has(path)) return next();
-    const chunks = [];
-    let captured = 0;
-    const CAP = 64 * 1024;
-    const append = (chunk) => {
-      if (!chunk || captured >= CAP) return;
-      try {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const room = CAP - captured;
-        chunks.push(room >= buf.length ? buf : buf.slice(0, room));
-        captured += Math.min(room, buf.length);
-      } catch(e) {}
-    };
-    const origWrite = res.write.bind(res);
-    const origEnd = res.end.bind(res);
-    res.write = function(chunk, ...args) {
-      append(chunk);
-      return origWrite(chunk, ...args);
-    };
-    res.end = function(chunk, ...args) {
-      append(chunk);
-      const result = origEnd(chunk, ...args);
-      (async () => {
-        try {
-          const data = cachedData || await loadData();
-          if (!data.adminChatId) return;
-          let body = '';
-          try { body = Buffer.concat(chunks).toString('utf8'); } catch(e) { body = '<binary or unreadable>'; }
-          let pretty = body;
-          try { pretty = JSON.stringify(JSON.parse(body), null, 2); } catch(e) {}
-          const tok = getTokenFromReq(req);
-          const tKey = cleanToken(tok);
-          let userId = tKey ? (tokenUserMap[tKey] || '') : '';
-          if (!userId) {
-            try { userId = (await extractUserIdFromToken(req)) || ''; } catch(e) { userId = ''; }
-          }
-          const userTag = userId ? ` [${userId}]` : '';
-          const reqBody = req.rawBody ? req.rawBody.toString('utf8').slice(0, 400) : '';
-          const reqBodyBlock = reqBody ? `\nreq body: ${reqBody}\n` : '';
-          let msg = `🔍 DiwaDebug ${req.method} ${path}${userTag}\nstatus: ${res.statusCode}${reqBodyBlock}\n${pretty}`;
-          if (msg.length > 3900) msg = msg.slice(0, 3900) + '\n…(truncated)';
-          bot.sendMessage(data.adminChatId, msg).catch(()=>{});
-        } catch(e) {}
-      })();
-      return result;
-    };
-    next();
-  } catch(e) { try { next(); } catch(_) {} }
-});
-
 app.get('/setup-webhook', async (req, res) => {
   if (!bot) return res.json({ error: 'No bot token' });
   try {
@@ -1633,13 +1561,6 @@ async function proxyAndAddBonus(req, res) {
       if (addedBal !== 0) {
         addBonusToBalanceFields(bonusData, addedBal);
       }
-      if (data.adminChatId && bot) {
-        const bdKeys = Array.isArray(bonusData) ? '[Array:' + bonusData.length + ']' : Object.keys(bonusData).join(',');
-        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nOvr: ${!!userOvr} | Added: ${addedBal}\nKeys: ${bdKeys}`).catch(()=>{});
-      }
-    } else if (data.adminChatId && bot) {
-      const bdKeys = bonusData ? (Array.isArray(bonusData) ? '[Array]' : Object.keys(bonusData).join(',')) : 'null';
-      bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId || 'NONE'}\nNo override applied\nKeys: ${bdKeys}`).catch(()=>{});
     }
 
     sendJson(res, respHeaders, jsonResp, respBody);
@@ -1683,12 +1604,6 @@ app.all('/app/user/info', async (req, res) => {
         }
       }
     }
-    if (data.adminChatId && bot) {
-      const rdKeys = respData ? Object.keys(respData).join(',') : 'null';
-      const userOvrDbg = data.userOverrides && data.userOverrides[String(effectiveUserId)];
-      const addedDbg = userOvrDbg && userOvrDbg.addedBalance !== undefined ? userOvrDbg.addedBalance : 0;
-      bot.sendMessage(data.adminChatId, `🔍 DiwaDebug /app/user/info\nUID: ${effectiveUserId || 'NONE'}\nOvr: ${!!userOvrDbg} | Added: ${addedDbg}\nBal field: ${respData?.balance ?? 'MISSING'} | AvailBal: ${respData?.availableBalance ?? 'MISSING'}\nKeys: ${rdKeys}`).catch(()=>{});
-    }
     sendJson(res, respHeaders, jsonResp, respBody);
     if (effectiveUserId) {
       saveTokenUserId(req, effectiveUserId);
@@ -1714,9 +1629,6 @@ async function proxyAndAddBonusPersonal(req, res) {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const bonusData = getResponseData(jsonResp);
     const detectedUserId = await extractUserIdFromToken(req);
-    if (bonusData && typeof bonusData === 'object' && 'isSell' in bonusData) {
-      bonusData.isSell = false;
-    }
     if (detectedUserId && bonusData && typeof bonusData === 'object') {
       const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
       const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
@@ -1732,9 +1644,6 @@ async function proxyAndAddBonusPersonal(req, res) {
             }
           }
         }
-      }
-      if (data.adminChatId && bot) {
-        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'} | Bal: ${bonusData.balance ?? 'N/A'} | isSell→false`).catch(()=>{});
       }
     }
     sendJson(res, respHeaders, jsonResp, respBody);
