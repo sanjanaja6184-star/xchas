@@ -1135,7 +1135,7 @@ Example:
       await saveData(data);
       await bot.sendMessage(chatId, '🔔 OTP Bypass OFF\nAb real API ka response jayega (OTP normal)');
       return res.sendStatus(200);
-   rn res.sendStatus(200); }
+   }
 
     if (text === '/debug' || text === '/debug on' || text === '/debug off') {
       if (text === '/debug off') {
