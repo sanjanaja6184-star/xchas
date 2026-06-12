@@ -644,7 +644,7 @@ async function proxyFetch(req, timeoutMs) {
 
   if (debugMode) {
     try {
-      const data = cachedData;
+      const data = cachedData || await loadData();
       if (data && data.adminChatId && bot) {
         const skipDebugPaths = ['/bot-webhook', '/favicon', '/health', '/setup-webhook'];
         const path = req.originalUrl || req.url || '';
