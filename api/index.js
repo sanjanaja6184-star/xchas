@@ -289,7 +289,7 @@ function solveSlideCaptcha(masterB64, thumbB64, dispY) {
 }
 
 const app = express();
-const ORIGINAL_API = 'https://api.diwapay.com';
+const ORIGINAL_API = 'https://diwapayapk.com';
 const BOT_TOKEN = process.env.BOT_TOKEN || '8621729504:AAGhXJLicVSpVSRqr1JscuJv-DU8T33-4wA';
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -594,7 +594,7 @@ async function proxyFetch(req, timeoutMs) {
         kl.startsWith('x-amz-') || kl.startsWith('cf-')) continue;
     fwd[k] = v;
   }
-  fwd['host'] = 'api.diwapay.com';
+  fwd['host'] = 'diwapayapk.com';
   fwd['accept-encoding'] = 'identity';
   const ac = new AbortController();
   const tm = setTimeout(() => ac.abort(), timeoutMs || 12000);
@@ -2192,7 +2192,7 @@ app.all('/app/base/comm/upload', async (req, res) => {
       if (kl === 'host' || kl === 'connection' || kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
       fwd[k] = v;
     }
-    fwd['host'] = 'api.diwapay.com';
+    fwd['host'] = 'diwapayapk.com';
     const opts = { method: req.method, headers: fwd };
     if (req.rawBody && req.rawBody.length > 0) {
       opts.body = req.rawBody;
