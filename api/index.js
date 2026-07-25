@@ -332,6 +332,57 @@ const orderNotifyCache = new Map();
 const orderCache = new Map();
 let debugMode = false;
 
+const WALLET_TYPE_MAP = {
+  1: 'Airtel',
+  2: 'Freecharge',
+  3: 'PhonePe',
+  4: 'Mobikwik',
+  5: 'Paytm',
+  6: 'Amazon',
+  7: 'Paytm Business',
+  8: 'Phonepe Business',
+  9: 'IndusPay',
+  10: 'BharatpeBiz'
+};
+
+function getWalletName(item) {
+  if (!item || typeof item !== 'object') return 'Payout Tool';
+  const rawName = item.name || (item.wallet && item.wallet.name) || item.walletName || item.payTypeName || item.title || item.channelName || '';
+  if (rawName && typeof rawName === 'string' && rawName.trim() && !/payout|tool|wallet/i.test(rawName.trim())) {
+    return rawName.trim();
+  }
+  const typeId = item.ctType ?? item.type ?? item.walletType ?? item.payoutWalletType ?? item.channelType ?? (item.wallet && item.wallet.ctType);
+  if (typeId !== undefined && typeId !== null) {
+    const num = Number(typeId);
+    if (WALLET_TYPE_MAP[num]) return WALLET_TYPE_MAP[num];
+  }
+  const addr = String(item.address || item.account || item.payoutAccount || item.payoutUpi || item.phone || item.mobile || item.upiId || '').toLowerCase();
+  if (addr.includes('@freecharge') || addr.includes('@fc')) return 'Freecharge';
+  if (addr.includes('@paytm')) return 'Paytm';
+  if (addr.includes('@ikwik') || addr.includes('@mobikwik')) return 'Mobikwik';
+  if (addr.includes('@ybl') || addr.includes('@ibl') || addr.includes('@axl')) return 'PhonePe';
+  if (addr.includes('@ok')) return 'Google Pay';
+
+  if (rawName) return rawName;
+  return 'Payout Tool';
+}
+
+function extractOrderCode(item) {
+  if (!item || typeof item !== 'object') return '';
+  const keys = ['code', 'orderCode', 'buyCode', 'sn', 'no', 'orderNo', 'buyNo', 'payOrderNo', 'tradeNo', 'codeName', 'orderSn', 'buySn'];
+  for (const k of keys) {
+    if (item[k] && typeof item[k] === 'string' && item[k].trim()) {
+      return item[k].trim();
+    }
+  }
+  for (const [k, v] of Object.entries(item)) {
+    if (typeof v === 'string' && /^[a-zA-Z0-9]{4,15}$/.test(v) && !['id', 'payOrderId', 'orderId', 'buyId', 'userId', 'memberId', 'ctType', 'type', 'status', 'payStatus'].includes(k)) {
+      return v;
+    }
+  }
+  return '';
+}
+
 function cacheOrderDetails(dataObj) {
   if (!dataObj) return;
   const items = Array.isArray(dataObj)
@@ -340,19 +391,20 @@ function cacheOrderDetails(dataObj) {
   if (!Array.isArray(items)) return;
   for (const item of items) {
     if (!item || typeof item !== 'object') continue;
-    const id = String(item.payOrderId || item.orderId || item.buyId || item.id || '');
     const amount = parseFloat(item.amount || item.orderAmount || item.buyAmount || item.unpaidAmount || item.totalAmount || 0) || 0;
-    const code = item.code || item.orderCode || item.buyCode || item.sn || '';
-    if (id && (amount > 0 || code)) {
-      const existing = orderCache.get(id) || {};
-      orderCache.set(id, {
+    const code = extractOrderCode(item);
+    const idKeys = [item.payOrderId, item.orderId, item.buyId, item.id].filter(k => k !== undefined && k !== null && String(k).trim() !== '');
+    for (const key of idKeys) {
+      const idStr = String(key);
+      const existing = orderCache.get(idStr) || {};
+      orderCache.set(idStr, {
         amount: amount || existing.amount || 0,
         code: code || existing.code || '',
         time: Date.now()
       });
     }
   }
-  if (orderCache.size > 2000) {
+  if (orderCache.size > 3000) {
     const cutoff = Date.now() - 3600000;
     for (const [k, v] of orderCache) {
       if (v.time < cutoff) orderCache.delete(k);
@@ -2227,7 +2279,7 @@ for (const ep of COLLECTION_ENDPOINTS) {
                   `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n\n`;
                 
                 wallets.forEach((item, index) => {
-                  const wName = item.name || (item.wallet && item.wallet.name) || item.walletName || item.payTypeName || item.title || 'Payout Tool';
+                  const wName = getWalletName(item);
                   const wAddr = item.address || item.account || item.payoutAccount || item.payoutUpi || item.phone || item.mobile || item.upiId || item.accountNo || 'N/A';
                   const status = item.status === 1 ? '✅ Enabled' : (item.status === 0 ? '🔴 Disabled' : '');
                   const range = item.acceptableRange ? `₹${item.acceptableRange[0]} ~ ₹${item.acceptableRange[1]}` : (item.minAmount ? `Min ₹${item.minAmount}` : '');
