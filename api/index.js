@@ -2217,9 +2217,9 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
         dd.amount || dd.orderAmount || dd.buyAmount || dd.unpaidAmount || dd.totalAmount || 0
       ) || 0;
 
-      const realAcct = dd.payeeAccount || dd.receiveAccount || dd.bankAccount || dd.accountNo || dd.account || '';
-      const realName = dd.payeeName || dd.receiveName || dd.accountName || dd.beneficiaryName || dd.accountHolder || '';
-      const realIfsc = dd.ifsc || dd.ifscCode || dd.receiveIfsc || '';
+      const realAcct = dd.payeeAccount || dd.bankAccount || dd.accountNo || dd.account || dd.receiveAccount || '';
+      const realName = dd.name || dd.payeeName || dd.accountName || dd.beneficiaryName || dd.receiveName || dd.realName || dd.userName || dd.accountHolder || '';
+      const realIfsc = dd.ifsc || dd.ifscCode || dd.bankIfsc || dd.receiveIfsc || '';
 
       const orderIdStr = String(dd.orderId || dd.orderNo || dd.buyId || req.query?.buyId || req.query?.orderId || '').trim();
       const cached = orderIdStr ? orderCache.get(orderIdStr) : null;
