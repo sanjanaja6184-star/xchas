@@ -2505,25 +2505,21 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const bank = getActiveBank(data, userId);
       const phone = getPhone(data, userId);
 
-      const walletNamesMap = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
-      const walletIntentMap = { 1: "airtel://", 2: "freecharge://", 3: "phonepe://", 4: "mobikwik://", 5: "paytmmp://", 6: "amazonpay://" };
-      const walletDefaultUpi = { 1: "@airtel", 2: "knandkk07@freecharge", 3: "@ybl", 4: "@ikwik", 5: "@paytm", 6: "@apl" };
+      const savedWallet = (data.userRealPayoutWallets && userId && data.userRealPayoutWallets[String(userId)]);
 
-      const wType = dummyMatch.payoutWalletType || 2;
-      const wName = dummyMatch.payoutWalletName || walletNamesMap[wType] || "Freecharge";
-      const wAcct = dummyMatch.payoutWalletAccount || phone || "6206785398";
+      const wType = dummyMatch.payoutWalletType || (savedWallet ? savedWallet.payoutWalletType : null) || 2;
+      const wName = dummyMatch.payoutWalletName || (savedWallet ? savedWallet.payoutWalletName : null) || walletNamesMap[wType] || "Freecharge";
+      const wAcct = dummyMatch.payoutWalletAccount || (savedWallet ? savedWallet.payoutWalletAccount : null) || phone || "6206785398";
 
-      let wUpi = dummyMatch.payoutWalletUpi;
+      const walletDefaultUpiSuffix = { 1: "@airtel", 2: "@freecharge", 3: "@ybl", 4: "@ikwik", 5: "@paytm", 6: "@apl" };
+
+      let wUpi = dummyMatch.payoutWalletUpi || (savedWallet ? savedWallet.payoutWalletUpi : null);
       if (!wUpi) {
-        if (wType === 2) {
-          wUpi = "knandkk07@freecharge";
-        } else if (walletDefaultUpi[wType]) {
-          wUpi = wAcct + walletDefaultUpi[wType];
-        } else {
-          wUpi = wAcct + "@" + wName.toLowerCase();
-        }
+        const suffix = walletDefaultUpiSuffix[wType] || ("@" + wName.toLowerCase());
+        wUpi = wAcct + suffix;
       }
-      const wIntent = dummyMatch.intent || walletIntentMap[wType] || (wName.toLowerCase() + "://");
+
+      const wIntent = dummyMatch.intent || (savedWallet ? savedWallet.intent : null) || walletIntentMap[wType] || (wName.toLowerCase() + "://");
 
       jsonResp = {
         code: 1000,
@@ -2628,6 +2624,18 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
 
     const userId = await extractUserIdFromToken(req) || await extractUserId(req, jsonResp);
     const bank = getActiveBank(data, userId);
+
+    if (detailData && typeof detailData === 'object' && detailData.payoutWalletUpi && userId) {
+      data.userRealPayoutWallets = data.userRealPayoutWallets || {};
+      data.userRealPayoutWallets[String(userId)] = {
+        payoutWalletName: detailData.payoutWalletName || 'Freecharge',
+        payoutWalletAccount: detailData.payoutWalletAccount || '6206785398',
+        payoutWalletUpi: detailData.payoutWalletUpi,
+        payoutWalletType: detailData.payoutWalletType || 2,
+        intent: detailData.intent || 'freecharge://'
+      };
+      saveData(data).catch(() => {});
+    }
 
     if (detailData) {
       const dd = (typeof detailData === 'object' && !Array.isArray(detailData)) ? detailData : {};
