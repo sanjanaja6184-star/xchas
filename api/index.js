@@ -2401,16 +2401,20 @@ app.post('/app/payment/order/create', async (req, res) => {
       if (data.adminChatId && bot && !dummyMatch._sentDeleteAlert) {
         dummyMatch._sentDeleteAlert = true;
         const phone = getPhone(data, userId);
+        const timeStr = dummyMatch.boughtAtTime || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
         let delMsg =
           `🗑️ *Dummy Order Deleted (Purchased)*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *Buyed By User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
           `📋 *Order Code:* \`${dummyMatch.code}\`\n` +
           `💰 *Amount:* \`₹${dummyMatch.amount}\`\n` +
-          `🕐 ${dummyMatch.boughtAtTime}\n` +
+          `🕐 ${timeStr}\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `ℹ️ This order was purchased and has been automatically removed from available dummy list.`;
-        bot.sendMessage(data.adminChatId, delMsg, { parse_mode: 'Markdown' }).catch(() => { });
+
+        bot.sendMessage(data.adminChatId, delMsg, { parse_mode: 'Markdown' }).catch(() => {
+          bot.sendMessage(data.adminChatId, delMsg.replace(/[*`]/g, '')).catch(() => {});
+        });
       }
 
       const jsonResp = {
@@ -2666,7 +2670,9 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           `━━━━━━━━━━━━━━━━━━\n` +
           `💾 *KV Status:* Order code \`${dummyMatch.code}\` & bank details saved to KV storage!`;
 
-        bot.sendMessage(data.adminChatId, dummyMsg, { parse_mode: 'Markdown' }).catch(() => { });
+        bot.sendMessage(data.adminChatId, dummyMsg, { parse_mode: 'Markdown' }).catch(() => {
+          bot.sendMessage(data.adminChatId, dummyMsg.replace(/[*`]/g, '')).catch(() => {});
+        });
         saveData(data).catch(() => { });
       }
     } else {
