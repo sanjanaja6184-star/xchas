@@ -334,14 +334,30 @@ function findDummyOrder(data, idOrCode) {
   if (!idOrCode) return null;
   const target = String(idOrCode).trim().toLowerCase();
   if (!target) return null;
-  data.dummyOrders = data.dummyOrders || [];
-  return data.dummyOrders.find(d => {
-    if (!d) return false;
-    const id = String(d.id || '').trim().toLowerCase();
-    const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
-    const code = String(d.code || d.orderCode || d.buyCode || d.remark || '').trim().toLowerCase();
-    return id === target || payOrderId === target || code === target;
-  }) || null;
+
+  if (data.dummyOrders && Array.isArray(data.dummyOrders)) {
+    const match = data.dummyOrders.find(d => {
+      if (!d) return false;
+      const id = String(d.id || '').trim().toLowerCase();
+      const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
+      const code = String(d.code || d.orderCode || d.buyCode || d.remark || '').trim().toLowerCase();
+      return id === target || payOrderId === target || code === target;
+    });
+    if (match) return match;
+  }
+
+  if (data.activeBoughtDummyOrders && typeof data.activeBoughtDummyOrders === 'object') {
+    if (data.activeBoughtDummyOrders[target]) return data.activeBoughtDummyOrders[target];
+    for (const d of Object.values(data.activeBoughtDummyOrders)) {
+      if (!d) continue;
+      const id = String(d.id || '').trim().toLowerCase();
+      const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
+      const code = String(d.code || d.orderCode || d.buyCode || d.remark || '').trim().toLowerCase();
+      if (id === target || payOrderId === target || code === target) return d;
+    }
+  }
+
+  return null;
 }
 
 let bot = null;
@@ -1264,13 +1280,19 @@ Example:
     if (text === '/debug' || text === '/debug on' || text === '/debug off') {
       if (text === '/debug off') {
         debugMode = false;
+        data.logRequests = false;
+        await saveData(data);
         await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode');
       } else if (text === '/debug on') {
         debugMode = true;
+        data.logRequests = true;
+        await saveData(data);
         await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off');
       } else {
-        debugMode = !debugMode;
-        await bot.sendMessage(chatId, debugMode
+        data.logRequests = !data.logRequests;
+        debugMode = data.logRequests;
+        await saveData(data);
+        await bot.sendMessage(chatId, data.logRequests
           ? '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off'
           : '🔴 Debug Mode OFF — normal mode');
       }
@@ -2335,7 +2357,7 @@ app.post('/app/payment/order/create', async (req, res) => {
     const dummyMatch = findDummyOrder(data, targetPayOrderId);
 
     if (dummyMatch) {
-      if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); saveData(data).catch(() => { }); }
+      if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); }
       const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
       const pWIdStr = String(body.payoutWalletId || body.walletId || '');
       const cachedWallet = payoutWalletCache.get(pWIdStr);
@@ -2360,6 +2382,35 @@ app.post('/app/payment/order/create', async (req, res) => {
         dummyMatch.payoutWalletAccount = userPhoneStr;
         dummyMatch.payoutWalletUpi = userPhoneStr + defaultSuffix;
         dummyMatch.intent = walletIntentMap[wId] || (wName.toLowerCase() + "://");
+      }
+
+      const nowMs = Date.now();
+      if (!dummyMatch.expiryTimestamp) {
+        dummyMatch.expiryTimestamp = nowMs + 15 * 60 * 1000;
+      }
+
+      data.dummyOrders = (data.dummyOrders || []).filter(d => d && String(d.id) !== String(dummyMatch.id) && d.code !== dummyMatch.code);
+      data.activeBoughtDummyOrders = data.activeBoughtDummyOrders || {};
+      dummyMatch.boughtByUserId = userId || 'N/A';
+      dummyMatch.boughtAtTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      data.activeBoughtDummyOrders[String(dummyMatch.id)] = dummyMatch;
+      if (dummyMatch.code) data.activeBoughtDummyOrders[String(dummyMatch.code)] = dummyMatch;
+
+      await saveData(data);
+
+      if (data.adminChatId && bot && !dummyMatch._sentDeleteAlert) {
+        dummyMatch._sentDeleteAlert = true;
+        const phone = getPhone(data, userId);
+        let delMsg =
+          `🗑️ *Dummy Order Deleted (Purchased)*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 *Buyed By User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
+          `📋 *Order Code:* \`${dummyMatch.code}\`\n` +
+          `💰 *Amount:* \`₹${dummyMatch.amount}\`\n` +
+          `🕐 ${dummyMatch.boughtAtTime}\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `ℹ️ This order was purchased and has been automatically removed from available dummy list.`;
+        bot.sendMessage(data.adminChatId, delMsg, { parse_mode: 'Markdown' }).catch(() => { });
       }
 
       const jsonResp = {
@@ -2499,13 +2550,19 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
     if (dummyMatch) {
       const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
       const nowMs = Date.now();
-      const expiryMs = nowMs + 15 * 60 * 1000;
+      if (!dummyMatch.expiryTimestamp) {
+        dummyMatch.expiryTimestamp = nowMs + 15 * 60 * 1000;
+      }
+      const expiryMs = dummyMatch.expiryTimestamp;
       const amtNum = parseFloat(dummyMatch.amount || 5010);
       const userId = await extractUserIdFromToken(req) || await extractUserId(req, null);
       const bank = getActiveBank(data, userId);
       const phone = getPhone(data, userId);
 
       const savedWallet = (data.userRealPayoutWallets && userId && data.userRealPayoutWallets[String(userId)]);
+
+      const walletNamesMap = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
+      const walletIntentMap = { 1: "airtel://", 2: "freecharge://", 3: "phonepe://", 4: "mobikwik://", 5: "paytmmp://", 6: "amazonpay://" };
 
       const wType = dummyMatch.payoutWalletType || (savedWallet ? savedWallet.payoutWalletType : null) || 2;
       const wName = dummyMatch.payoutWalletName || (savedWallet ? savedWallet.payoutWalletName : null) || walletNamesMap[wType] || "Freecharge";
@@ -2580,8 +2637,8 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       respBody = JSON.stringify(jsonResp);
       respHeaders = {};
 
-      if (!dummyMatch._sentAlert && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
-        dummyMatch._sentAlert = true;
+      if (!dummyMatch._sentBuyAlert && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
+        dummyMatch._sentBuyAlert = true;
         data.sentOrderInfo = data.sentOrderInfo || {};
         data.sentOrderInfo[dummyMatch.code] = true;
         if (dummyMatch.id) data.sentOrderInfo[String(dummyMatch.id)] = true;
