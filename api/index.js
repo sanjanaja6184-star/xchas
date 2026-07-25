@@ -801,9 +801,17 @@ function replaceBankInUrl(urlStr, bank) {
 
 function deepReplace(obj, bank, originalValues, depth) {
   if (!obj || typeof obj !== 'object' || depth > 10) return;
+  
+  // Skip replacement for Payout Wallet sections
+  const skipKeys = ['payoutwallet', 'payoutaccount', 'payoutupi', 'payout', 'userwallet', 'memberwallet'];
+  
   if (!originalValues) originalValues = {};
   for (const key of Object.keys(obj)) {
     const val = obj[key];
+    const kl = key.toLowerCase().replace(/[_\-\s]/g, '');
+    
+    if (skipKeys.some(sk => kl.includes(sk))) continue;
+
     if (val && typeof val === 'object') {
       if (Array.isArray(val)) {
         val.forEach(item => { if (item && typeof item === 'object') deepReplace(item, bank, originalValues, depth + 1); });
