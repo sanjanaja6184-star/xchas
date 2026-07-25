@@ -1950,20 +1950,33 @@ app.post('/app/payment/order/create', async (req, res) => {
 
     const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000' || jsonResp.code === '200');
 
-    if (isSuccess && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
+    if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
       const orderId = body.orderId || body.orderNo || body.buyId || 'N/A';
       const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || 0) || 0;
-      const msg =
-        `✅ Order Created!\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n` +
-        `📋 Order ID: ${orderId}\n` +
-        `💰 Amount: ₹${orderAmt || 'N/A'}\n` +
-        `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
-        `(Bank details in next message ↓)`;
-      bot.sendMessage(data.adminChatId, msg).catch(()=>{});
+
+      if (isSuccess) {
+        const msg =
+          `✅ *Order Created!*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
+          `📋 *Order ID:* \`${orderId}\`\n` +
+          `💰 *Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
+          `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+          `(Bank details in next message ↓)`;
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+      } else {
+        const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        const msg =
+          `❌ *Order Failed!*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
+          `💰 *Attempted Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
+          `⚠️ *Reason:* ${errorMsg}\n` +
+          `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+      }
     }
 
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
@@ -2196,8 +2209,8 @@ for (const ep of COLLECTION_ENDPOINTS) {
             const selected = jsonResp.data.filter(i => i.status === 1);
             if (selected.length > 0) {
               selected.forEach((item, index) => {
-                const walletName = item.wallet ? item.wallet.name : 'Unknown App';
-                const address = item.address || 'N/A';
+                const walletName = (item.wallet && item.wallet.name) ? item.wallet.name : (item.name || item.payType || 'Unknown App');
+                const address = item.address || item.accountNo || 'N/A';
                 msg += `${index + 1}. ✅ *${walletName}* Selected\n`;
                 msg += `   📍 ID: \`${address}\`\n\n`;
               });
