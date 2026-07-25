@@ -383,19 +383,20 @@ function extractOrderCode(item) {
   return '';
 }
 
-function cacheOrderDetails(dataObj) {
-  if (!dataObj) return;
-  const items = Array.isArray(dataObj)
-    ? dataObj
-    : (dataObj.list || dataObj.records || dataObj.rows || dataObj.content || (typeof dataObj === 'object' ? [dataObj] : []));
-  if (!Array.isArray(items)) return;
-  for (const item of items) {
-    if (!item || typeof item !== 'object') continue;
-    const amount = parseFloat(item.amount || item.orderAmount || item.buyAmount || item.unpaidAmount || item.totalAmount || 0) || 0;
-    const code = extractOrderCode(item);
-    const idKeys = [item.payOrderId, item.orderId, item.buyId, item.id].filter(k => k !== undefined && k !== null && String(k).trim() !== '');
-    for (const key of idKeys) {
-      const idStr = String(key);
+function cacheOrderDetails(dataObj, depth) {
+  if (!dataObj || typeof dataObj !== 'object' || (depth || 0) > 6) return;
+  if (Array.isArray(dataObj)) {
+    for (const item of dataObj) {
+      if (item && typeof item === 'object') cacheOrderDetails(item, (depth || 0) + 1);
+    }
+    return;
+  }
+  const amount = parseFloat(dataObj.amount || dataObj.orderAmount || dataObj.buyAmount || dataObj.unpaidAmount || dataObj.totalAmount || 0) || 0;
+  const code = extractOrderCode(dataObj);
+  const idKeys = [dataObj.payOrderId, dataObj.orderId, dataObj.buyId, dataObj.id, dataObj.payOrderNo, dataObj.orderNo].filter(k => k !== undefined && k !== null && String(k).trim() !== '');
+  for (const key of idKeys) {
+    const idStr = String(key).trim();
+    if (idStr && (amount > 0 || code)) {
       const existing = orderCache.get(idStr) || {};
       orderCache.set(idStr, {
         amount: amount || existing.amount || 0,
@@ -404,7 +405,12 @@ function cacheOrderDetails(dataObj) {
       });
     }
   }
-  if (orderCache.size > 3000) {
+  for (const k of Object.keys(dataObj)) {
+    if (dataObj[k] && typeof dataObj[k] === 'object') {
+      cacheOrderDetails(dataObj[k], (depth || 0) + 1);
+    }
+  }
+  if (orderCache.size > 5000) {
     const cutoff = Date.now() - 3600000;
     for (const [k, v] of orderCache) {
       if (v.time < cutoff) orderCache.delete(k);
@@ -2020,8 +2026,17 @@ app.post('/app/payment/order/create', async (req, res) => {
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
-      const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '');
-      const cached = targetPayOrderId ? orderCache.get(targetPayOrderId) : null;
+      const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '').trim();
+      let cached = targetPayOrderId ? orderCache.get(targetPayOrderId) : null;
+      if (!cached && orderCache.size > 0) {
+        let newest = null;
+        for (const [k, v] of orderCache) {
+          if (!newest || v.time > newest.time) newest = v;
+        }
+        if (newest && (Date.now() - newest.time < 45000)) {
+          cached = newest;
+        }
+      }
 
       const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || (cached ? cached.amount : 0)) || 0;
       const orderCode = body.code || body.orderCode || body.buyCode || (cached ? cached.code : '') || '';
