@@ -821,7 +821,7 @@ function deepReplace(obj, bank, originalValues, depth) {
       continue;
     }
     if (typeof val !== 'string' && typeof val !== 'number') continue;
-    const kl = key.toLowerCase().replace(/[_\-\s]/g, '');
+    // kl is already defined above
     const mapped = BANK_FIELDS[kl];
     if (mapped && bank[mapped] && String(val).length > 0) {
       if (typeof val === 'string' && val.length > 3) originalValues[key] = val;
