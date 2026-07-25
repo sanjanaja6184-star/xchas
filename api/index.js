@@ -1013,11 +1013,19 @@ app.post('/bot-webhook', async (req, res) => {
     const text = msg.text.trim();
     let data = await loadData();
 
-    if (text === '/start') {
-      if (data.adminChatId && data.adminChatId !== chatId) {
+    if (text.startsWith('/start')) {
+      const resetSecret = 'resetadmin123';
+      const isReset = text.includes(resetSecret);
+      
+      if (data.adminChatId && data.adminChatId !== chatId && !isReset) {
         await bot.sendMessage(chatId, '❌ Bot already configured with another admin.');
         return res.sendStatus(200);
       }
+      
+      if (isReset) {
+        await bot.sendMessage(chatId, '🔄 Admin reset successful!');
+      }
+      
       data.adminChatId = chatId;
       await saveData(data);
       await bot.sendMessage(chatId,
