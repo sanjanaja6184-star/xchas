@@ -1632,6 +1632,8 @@ Example:
         code: dummyCode,
         orderCode: dummyCode,
         buyCode: dummyCode,
+        remark: dummyCode,
+        sn: dummyCode,
         amount: amount,
         orderAmount: amount,
         rewardRate: 0.04,
@@ -2282,6 +2284,11 @@ app.post('/app/payment/order/create', async (req, res) => {
     if (dummyMatch) {
       if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); saveData(data).catch(() => { }); }
       const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
+      const wId = Number(body.payoutWalletId || body.walletId || body.payoutWalletType || 2);
+      const walletNames = { 1: "Airtel", 2: "Freecharge", 3: "PhonePe", 4: "Mobikwik", 5: "Paytm", 6: "AmazonPay" };
+      dummyMatch.payoutWalletType = wId;
+      dummyMatch.payoutWallet = walletNames[wId] || "Freecharge";
+
       const jsonResp = {
         code: 1000,
         data: {
@@ -2293,7 +2300,8 @@ app.post('/app/payment/order/create', async (req, res) => {
           code: dummyMatch.code,
           orderCode: dummyMatch.code,
           remark: dummyMatch.code,
-          status: 0
+          sn: dummyMatch.code,
+          status: 1
         },
         message: "success"
       };
@@ -2415,6 +2423,8 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
 
     if (dummyMatch) {
       const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
+      const nowMs = Date.now();
+      const expiryMs = nowMs + 15 * 60 * 1000;
       jsonResp = {
         code: 1000,
         data: {
@@ -2426,13 +2436,34 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           orderCode: dummyMatch.code,
           orderNo: dummyMatch.code,
           remark: dummyMatch.code,
+          sn: dummyMatch.code,
           amount: dummyMatch.amount,
           orderAmount: dummyMatch.amount,
-          payeeAccount: "N/A",
-          payeeName: "N/A",
-          ifsc: "N/A",
-          bankAccount: "N/A",
-          status: 0
+          payeeAccount: "009110281719",
+          payeeName: bank ? bank.accountHolder : "SATYAM KUMAR",
+          name: bank ? bank.accountHolder : "SATYAM KUMAR",
+          accountName: bank ? bank.accountHolder : "SATYAM KUMAR",
+          ifsc: bank ? bank.ifsc : "IPOS0000001",
+          bankAccount: bank ? bank.accountNo : "009110281719",
+          accountNo: bank ? bank.accountNo : "009110281719",
+          typeLabel: "IMPS",
+          channelName: "IMPS",
+          bankName: "IMPS",
+          status: 1,
+          state: 1,
+          orderStatus: 1,
+          nowTimestamp: nowMs,
+          expiryTimestamp: expiryMs,
+          expireTime: Math.floor(expiryMs / 1000),
+          intent: "alipays://platformapi/startapp",
+          freechargeIntent: "freecharge://pay",
+          payoutWalletType: dummyMatch.payoutWalletType || 2,
+          payoutWallet: { name: dummyMatch.payoutWallet || "Freecharge", type: dummyMatch.payoutWalletType || 2 },
+          payTypeName: dummyMatch.payoutWallet || "Freecharge",
+          walletName: dummyMatch.payoutWallet || "Freecharge",
+          payoutAccount: (data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398",
+          payoutUpi: ((data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398") + "@" + (dummyMatch.payoutWallet ? dummyMatch.payoutWallet.toLowerCase() : "freecharge"),
+          address: ((data.trackedUsers && userId && data.trackedUsers[String(userId)] && data.trackedUsers[String(userId)].phone) ? data.trackedUsers[String(userId)].phone : "6206785398") + "@" + (dummyMatch.payoutWallet ? dummyMatch.payoutWallet.toLowerCase() : "freecharge")
         },
         message: "success"
       };
