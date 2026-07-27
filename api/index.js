@@ -371,7 +371,7 @@ if (REDIS_URL && REDIS_TOKEN) {
 
 let cachedData = null;
 let cacheTime = 0;
-const CACHE_TTL = 15000;
+const CACHE_TTL = 1000;
 const tokenUserMap = {};
 const userPhoneMap = {};
 const refreshTokenMap = {};
@@ -1288,29 +1288,55 @@ Example:
       return res.sendStatus(200);
     }
 
-    if (text === '/on') { data.botEnabled = true; await saveData(data); await bot.sendMessage(chatId, '🟢 Proxy ON'); return res.sendStatus(200); }
-    if (text === '/off') { data.botEnabled = false; await saveData(data); await bot.sendMessage(chatId, '🔴 Proxy OFF — passthrough'); return res.sendStatus(200); }
-    if (text === '/rotate') { data.autoRotate = !data.autoRotate; data.lastUsedIndex = -1; await saveData(data); await bot.sendMessage(chatId, `🔄 Auto-Rotate: ${data.autoRotate ? 'ON' : 'OFF'}`); return res.sendStatus(200); }
-    if (text === '/log') { data.logRequests = !data.logRequests; await saveData(data); await bot.sendMessage(chatId, `📋 Logging: ${data.logRequests ? 'ON' : 'OFF'}`); return res.sendStatus(200); }
+    if (text === '/on') {
+      const freshData = await loadData(true);
+      freshData.botEnabled = true;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '🟢 Proxy ON — bot active').catch(() => {});
+      return res.sendStatus(200);
+    }
+    if (text === '/off') {
+      const freshData = await loadData(true);
+      freshData.botEnabled = false;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '🔴 Proxy OFF — passthrough').catch(() => {});
+      return res.sendStatus(200);
+    }
+    if (text === '/rotate') {
+      const freshData = await loadData(true);
+      freshData.autoRotate = !freshData.autoRotate;
+      freshData.lastUsedIndex = -1;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, `🔄 Auto-Rotate: ${freshData.autoRotate ? 'ON' : 'OFF'}`).catch(() => {});
+      return res.sendStatus(200);
+    }
+    if (text === '/log') {
+      const freshData = await loadData(true);
+      freshData.logRequests = !freshData.logRequests;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, `📋 Logging: ${freshData.logRequests ? 'ON' : 'OFF'}`).catch(() => {});
+      return res.sendStatus(200);
+    }
 
     if (text === '/debug' || text === '/debug on' || text === '/debug off') {
+      const freshData = await loadData(true);
       if (text === '/debug off') {
         debugMode = false;
-        data.logRequests = false;
-        await saveData(data);
-        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode');
+        freshData.logRequests = false;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode').catch(() => {});
       } else if (text === '/debug on') {
         debugMode = true;
-        data.logRequests = true;
-        await saveData(data);
-        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off');
+        freshData.logRequests = true;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off').catch(() => {});
       } else {
-        data.logRequests = !data.logRequests;
-        debugMode = data.logRequests;
-        await saveData(data);
-        await bot.sendMessage(chatId, data.logRequests
+        freshData.logRequests = !freshData.logRequests;
+        debugMode = freshData.logRequests;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, freshData.logRequests
           ? '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off'
-          : '🔴 Debug Mode OFF — normal mode');
+          : '🔴 Debug Mode OFF — normal mode').catch(() => {});
       }
       return res.sendStatus(200);
     }
@@ -1878,7 +1904,7 @@ app.post('/app/user/login/login', async (req, res) => {
     if (data.adminChatId && bot) {
       const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000');
       if (isSuccess) {
-        const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || '');
+        const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
         let msg =
           `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
@@ -2051,7 +2077,7 @@ app.post('/app/user/login/confirm', async (req, res) => {
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
-        const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || '');
+        const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
         let msg =
           `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
@@ -2574,26 +2600,23 @@ app.post('/app/payment/order/submit', async (req, res) => {
   try {
     const body = req.parsedBody || {};
     const orderIdStr = String(body.orderId || body.orderNo || body.buyId || '').trim();
-    data.dummyOrders = data.dummyOrders || [];
-    const dummyMatch = data.dummyOrders.find(d => String(d.id) === orderIdStr || d.code === orderIdStr);
+    const dummyMatch = findDummyOrder(data, orderIdStr);
 
     if (dummyMatch) {
-      const userId = await extractUserId(req, null);
-      const phone = getPhone(data, userId);
+      const subUserId = await extractUserId(req, null);
       if (data.adminChatId && bot) {
-        bot.sendMessage(data.adminChatId, `📤 Payment Submit (Dummy Order) [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}\nUTR: ${body.utr || body.transactionId || 'N/A'}\nOrder: ${dummyMatch.code}`).catch(() => { });
+        bot.sendMessage(data.adminChatId, `📥 Payment Submitted (Dummy Order) [${subUserId || 'N/A'}]\nOrder: ${dummyMatch.code}`).catch(() => { });
       }
       const jsonResp = { code: 1000, message: "success" };
       return sendJsonSafe(res, {}, jsonResp, JSON.stringify(jsonResp), req);
     }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const userId = await extractUserId(req, jsonResp);
-    if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
-      const phone = getPhone(data, userId);
-      bot.sendMessage(data.adminChatId, `📤 Payment Submit [${userId || 'N/A'}]${phone ? ' (' + phone + ')' : ''}\nUTR: ${body.utr || body.transactionId || body.referenceNo || body.txnId || 'N/A'}\nOrder: ${body.orderId || body.orderNo || body.buyId || 'N/A'}`).catch(() => { });
+    const subUserId = await extractUserId(req, jsonResp);
+    if (data.adminChatId && bot && !isLogOff(data, subUserId) && !(await isLogOffByToken(data, req))) {
+      const utrStr = body.utr || body.refNo || body.txnId || body.payNo || 'N/A';
+      bot.sendMessage(data.adminChatId, `📥 Payment Submit [${subUserId || 'N/A'}]\nUTR: ${utrStr}\nOrder: ${req.parsedBody?.orderId || req.parsedBody?.orderNo || req.parsedBody?.buyId || 'N/A'}`).catch(() => { });
     }
-    if (userId) { trackUser(data, userId, `Submit ${body.utr || body.transactionId || ''}`); saveData(data).catch(() => { }); }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
 });
@@ -2603,8 +2626,7 @@ app.post('/app/payment/order/cancel', async (req, res) => {
   try {
     const body = req.parsedBody || {};
     const orderIdStr = String(body.orderId || body.orderNo || body.buyId || '').trim();
-    data.dummyOrders = data.dummyOrders || [];
-    const dummyMatch = data.dummyOrders.find(d => String(d.id) === orderIdStr || d.code === orderIdStr);
+    const dummyMatch = findDummyOrder(data, orderIdStr);
 
     if (dummyMatch) {
       const cancelUserId = await extractUserId(req, null);
