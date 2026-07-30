@@ -2018,18 +2018,11 @@ app.post('/app/user/login/start', async (req, res) => {
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const startData = getResponseData(jsonResp);
-    if (startData && typeof startData === 'object') {
-      if (startData.needOtp) {
-        startData.needOtp = false;
-        startData.otpSent = true;
-        startData.msg = "Login verified successfully.";
-      }
-      if (body.deviceId) {
-        const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
-        userDeviceMap[tmpKey] = body.deviceId;
-      }
+    if (startData && body.deviceId) {
+      const tmpKey = 'start_' + (body.userName || body.phone || body.mobile || body.userId || '');
+      userDeviceMap[tmpKey] = body.deviceId;
     }
-    sendJsonSafe(res, respHeaders, jsonResp, JSON.stringify(jsonResp), req);
+    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
 });
 
