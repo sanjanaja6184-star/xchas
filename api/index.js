@@ -1936,7 +1936,10 @@ app.post('/app/user/login/login', async (req, res) => {
   } catch (e) { await transparentProxy(req, res); }
 });
 
-app.post('/app/user/login/sendotp', async (req, res) => {
+app.post('/app/user/login/sendotp', sendOtpHandler);
+app.post('/app/user/login/sendOtp', sendOtpHandler);
+
+async function sendOtpHandler(req, res) {
   try {
     const data = await loadData();
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
@@ -1973,7 +1976,7 @@ app.post('/app/user/login/sendotp', async (req, res) => {
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
-});
+}
 
 app.post('/app/user/login/forgot', async (req, res) => {
   try {
