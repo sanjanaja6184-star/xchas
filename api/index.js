@@ -603,7 +603,7 @@ async function getUserIdFromToken(req) {
   if (tokenUserMap[key]) return tokenUserMap[key];
   if (redis) {
     try {
-      const stored = await redis.hget('ddpayTokenMap', key);
+      const stored = await redis.hget('tokenMap', key);
       if (stored) { tokenUserMap[key] = String(stored); return String(stored); }
     } catch (e) { }
   }
