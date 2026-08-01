@@ -540,7 +540,7 @@ async function loadData(forceRefresh) {
   if (!forceRefresh && cachedData && (Date.now() - cacheTime < CACHE_TTL)) return cachedData;
   if (!redis) return { ...DEFAULT_DATA };
   try {
-    let raw = await redis.get('ddpayData');
+    let raw = await redis.get('diwapayData');
     if (raw) {
       if (typeof raw === 'string') {
         try { raw = JSON.parse(raw); } catch (e) { }
@@ -570,7 +570,7 @@ async function saveData(data) {
   if (!redis) return;
   try {
     // Use stringify to ensure proper serialization and await to ensure it's written
-    await redis.set('ddpayData', JSON.stringify(data));
+    await redis.set('diwapayData', JSON.stringify(data));
   } catch (e) {
     console.error('Redis save error:', e.message);
   }
@@ -592,7 +592,7 @@ function saveTokenUserId(req, userId) {
   const key = cleanToken(tok);
   if (key && key.length > 10) {
     tokenUserMap[key] = String(userId);
-    if (redis) redis.hset('ddpayTokenMap', key, String(userId)).catch(() => { });
+    if (redis) redis.hset('tokenMap', key, String(userId)).catch(() => { });
   }
 }
 
