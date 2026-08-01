@@ -381,10 +381,6 @@ function findDummyOrder(data, idOrCode) {
   return null;
 }
 
-let bot = null;
-let webhookSet = false;
-try { bot = new TelegramBot(BOT_TOKEN); } catch (e) { }
-
 let redis = null;
 if (REDIS_URL && REDIS_TOKEN) {
   try { redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN }); } catch (e) { }
