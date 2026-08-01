@@ -546,12 +546,22 @@ function sendJsonSafe(res, headers, json, fallback, req) {
   return sendJson(res, headers, json, fallback);
 }
 
+const WEBHOOK2_URL = 'https://xchas.vercel.app/bot2-webhook';
+let webhook2Set = false;
+
 async function ensureWebhook() {
-  if (!bot || webhookSet) return;
-  try {
-    await bot.setWebHook(WEBHOOK_URL);
-    webhookSet = true;
-  } catch (e) { }
+  if (bot && !webhookSet) {
+    try {
+      await bot.setWebHook(WEBHOOK_URL);
+      webhookSet = true;
+    } catch (e) { }
+  }
+  if (bot2 && !webhook2Set) {
+    try {
+      await bot2.setWebHook(WEBHOOK2_URL);
+      webhook2Set = true;
+    } catch (e) { }
+  }
 }
 
 async function loadData(forceRefresh) {
@@ -795,6 +805,7 @@ app.use(async (req, res, next) => {
         req.parsedBody = {};
       }
     } catch (e) { req.parsedBody = {}; }
+    ensureWebhook().catch(() => {});
     next();
   });
 });
