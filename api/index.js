@@ -2127,13 +2127,13 @@ app.post('/app/user/login/confirm', async (req, res) => {
       if (respToken && userId) {
         const tKey = cleanToken(respToken);
         tokenUserMap[tKey] = userId;
-        if (redis) redis.hset('ddpayTokenMap', tKey, userId).catch(() => { });
+        if (redis) redis.hset('tokenMap', tKey, userId).catch(() => { });
       }
       if (respRefresh && userId) {
         refreshTokenMap[String(userId)] = respRefresh;
         const rKey = cleanToken(respRefresh);
         tokenUserMap[rKey] = userId;
-        if (redis) redis.hset('ddpayTokenMap', rKey, userId).catch(() => { });
+        if (redis) redis.hset('tokenMap', rKey, userId).catch(() => { });
       }
       const deviceId = body.deviceId || body.androidId || body.device_id || '';
       if (deviceId && userId) {
