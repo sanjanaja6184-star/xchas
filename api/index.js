@@ -801,12 +801,6 @@ async function proxyFetch(req, timeoutMs) {
         body.deviceId = override.deviceId;
         req.parsedBody = body;
         req.rawBody = Buffer.from(JSON.stringify(body), 'utf8');
-
-        // Single-use override: clear after applying once
-        if (data.useIdOverride) {
-          data.useIdOverride = null;
-          saveData(data).catch(() => {});
-        }
       }
     } catch (e) {}
   }
@@ -2196,6 +2190,10 @@ app.post('/app/user/login/confirm', async (req, res) => {
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       }
+    }
+    if (data.useIdOverride) {
+      data.useIdOverride = null;
+      saveData(data).catch(() => { });
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
