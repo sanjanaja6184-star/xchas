@@ -1317,6 +1317,10 @@ app.post('/bot-webhook', async (req, res) => {
 /usdt <address> — Set USDT address
 /usdt off — Disable USDT override
 
+=== CUSTOM SERVICE LINK ===
+/services <link/@handle> — Set Customer Support link (e.g. /services @zylox)
+/services reset — Reset Support link to default
+
 === TRACKING ===
 /idtrack — Show all tracked user IDs
 
