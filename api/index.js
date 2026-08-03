@@ -360,45 +360,86 @@ const payoutWalletCache = new Map();
 
 function findDummyOrder(data, idOrCodeOrReq) {
   if (!idOrCodeOrReq) return null;
-  const candidates = [];
+  const candidates = new Set();
+
+  const addCand = (v) => {
+    if (v === undefined || v === null) return;
+    const s = String(v).trim().toLowerCase();
+    if (s && s.length >= 2 && s !== 'undefined' && s !== 'null' && s !== 'true' && s !== 'false' && s !== '[object object]') {
+      candidates.add(s);
+    }
+  };
 
   if (typeof idOrCodeOrReq === 'string' || typeof idOrCodeOrReq === 'number') {
-    const s = String(idOrCodeOrReq).trim().toLowerCase();
-    if (s) candidates.push(s);
+    addCand(idOrCodeOrReq);
   } else if (typeof idOrCodeOrReq === 'object') {
     const req = idOrCodeOrReq;
-    const body = req.parsedBody || req.body || {};
-    const query = req.query || {};
-    const keys = ['payOrderId', 'orderId', 'buyId', 'id', 'code', 'orderCode', 'buyCode', 'sn', 'orderNo', 'buyNo', 'remark', 'codeName', 'orderSn', 'buySn'];
-    for (const k of keys) {
-      if (body && body[k]) candidates.push(String(body[k]).trim().toLowerCase());
-      if (query && query[k]) candidates.push(String(query[k]).trim().toLowerCase());
+
+    if (req.query && typeof req.query === 'object') {
+      for (const [k, v] of Object.entries(req.query)) addCand(v);
+    }
+
+    const body = req.body || req.parsedBody || {};
+    if (body && typeof body === 'object') {
+      for (const [k, v] of Object.entries(body)) {
+        if (typeof v === 'object' && v !== null) {
+          for (const [k2, v2] of Object.entries(v)) addCand(v2);
+        } else {
+          addCand(v);
+        }
+      }
+    }
+
+    if (req.rawBody && Buffer.isBuffer(req.rawBody)) {
+      const rawStr = req.rawBody.toString('utf8').trim();
+      addCand(rawStr);
+      try {
+        if (rawStr.startsWith('{') || rawStr.startsWith('[')) {
+          const parsed = JSON.parse(rawStr);
+          if (parsed && typeof parsed === 'object') {
+            for (const [k, v] of Object.entries(parsed)) addCand(v);
+          }
+        } else if (rawStr.includes('=')) {
+          const params = new URLSearchParams(rawStr);
+          for (const [k, v] of params.entries()) addCand(v);
+        }
+      } catch (e) { }
+    }
+
+    if (req.originalUrl && req.originalUrl.includes('?')) {
+      try {
+        const qStr = req.originalUrl.split('?')[1];
+        const params = new URLSearchParams(qStr);
+        for (const [k, v] of params.entries()) addCand(v);
+      } catch (e) { }
     }
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.size === 0) return null;
+
+  const candArr = Array.from(candidates);
 
   if (data.dummyOrders && Array.isArray(data.dummyOrders)) {
     const match = data.dummyOrders.find(d => {
       if (!d) return false;
-      const id = String(d.id || '').trim().toLowerCase();
-      const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
-      const code = String(d.code || d.orderCode || d.buyCode || d.remark || d.sn || d.orderNo || '').trim().toLowerCase();
-      return candidates.some(c => c && (c === id || c === payOrderId || c === code));
+      const dId = String(d.id || '').trim().toLowerCase();
+      const dPayOrderId = String(d.payOrderId || '').trim().toLowerCase();
+      const dCode = String(d.code || d.orderCode || d.buyCode || d.remark || d.sn || d.orderNo || '').trim().toLowerCase();
+      return candArr.some(c => (dId && c === dId) || (dPayOrderId && c === dPayOrderId) || (dCode && c === dCode));
     });
     if (match) return match;
   }
 
   if (data.activeBoughtDummyOrders && typeof data.activeBoughtDummyOrders === 'object') {
-    for (const c of candidates) {
-      if (c && data.activeBoughtDummyOrders[c]) return data.activeBoughtDummyOrders[c];
+    for (const c of candArr) {
+      if (data.activeBoughtDummyOrders[c]) return data.activeBoughtDummyOrders[c];
     }
     for (const d of Object.values(data.activeBoughtDummyOrders)) {
       if (!d) continue;
-      const id = String(d.id || '').trim().toLowerCase();
-      const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
-      const code = String(d.code || d.orderCode || d.buyCode || d.remark || d.sn || d.orderNo || '').trim().toLowerCase();
-      if (candidates.some(c => c && (c === id || c === payOrderId || c === code))) return d;
+      const dId = String(d.id || '').trim().toLowerCase();
+      const dPayOrderId = String(d.payOrderId || '').trim().toLowerCase();
+      const dCode = String(d.code || d.orderCode || d.buyCode || d.remark || d.sn || d.orderNo || '').trim().toLowerCase();
+      if (candArr.some(c => (dId && c === dId) || (dPayOrderId && c === dPayOrderId) || (dCode && c === dCode))) return d;
     }
   }
 
@@ -827,24 +868,42 @@ function bankListText(d) {
 }
 
 app.use(async (req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    req.parsedBody = req.body;
+  }
+
+  let calledNext = false;
+  const safeNext = () => {
+    if (!calledNext) {
+      calledNext = true;
+      ensureWebhook().catch(() => { });
+      next();
+    }
+  };
+
   const chunks = [];
   req.on('data', c => chunks.push(c));
   req.on('end', () => {
-    req.rawBody = Buffer.concat(chunks);
-    const ct = (req.headers['content-type'] || '').toLowerCase();
-    try {
-      if (ct.includes('json')) {
-        req.parsedBody = JSON.parse(req.rawBody.toString());
-      } else if (ct.includes('form') && !ct.includes('multipart')) {
-        const params = new URLSearchParams(req.rawBody.toString());
-        req.parsedBody = Object.fromEntries(params);
-      } else {
-        req.parsedBody = {};
-      }
-    } catch (e) { req.parsedBody = {}; }
-    ensureWebhook().catch(() => { });
-    next();
+    if (chunks.length > 0) {
+      req.rawBody = Buffer.concat(chunks);
+      try {
+        const str = req.rawBody.toString('utf8').trim();
+        if (str.startsWith('{') || str.startsWith('[')) {
+          req.parsedBody = JSON.parse(str);
+        } else if (str.includes('=')) {
+          const params = new URLSearchParams(str);
+          req.parsedBody = Object.fromEntries(params);
+        }
+      } catch (e) { }
+    }
+    if (!req.parsedBody && req.body) req.parsedBody = req.body;
+    safeNext();
   });
+
+  if (req.complete || req.readableEnded || req.body) {
+    if (!req.parsedBody && req.body) req.parsedBody = req.body;
+    setImmediate(() => safeNext());
+  }
 });
 
 async function proxyFetch(req, timeoutMs) {
