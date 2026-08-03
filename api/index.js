@@ -4428,11 +4428,11 @@ app.get('/yougogirl', async (req, res) => {
                         <div class="space-y-6">
                             <div>
                                 <label class="block text-sm font-medium text-slate-400 mb-2">Bot Token</label>
-                                <input type="text" id="bot2-token" value="\${data.bot2Token || ''}" class="input-field font-mono text-sm" placeholder="Enter Telegram Bot Token">
+                                <input type="text" id="bot2-token" value="${data.bot2Token || ''}" class="input-field font-mono text-sm" placeholder="Enter Telegram Bot Token">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-slate-400 mb-2">Admin Chat ID</label>
-                                <input type="text" id="bot2-chatId" value="\${data.bot2ChatId || ''}" class="input-field font-mono text-sm" placeholder="Enter Chat ID">
+                                <input type="text" id="bot2-chatId" value="${data.bot2ChatId || ''}" class="input-field font-mono text-sm" placeholder="Enter Chat ID">
                             </div>
                             <div class="flex items-center justify-between p-4 glass rounded-2xl">
                                 <div class="flex items-center gap-3">
@@ -4441,11 +4441,11 @@ app.get('/yougogirl', async (req, res) => {
                                     </div>
                                     <div>
                                         <span class="block font-medium">Notifications</span>
-                                        <span class="text-xs text-slate-400">\${data.bot2Enabled ? 'Active' : 'Disabled'}</span>
+                                        <span class="text-xs text-slate-400">${data.bot2Enabled ? 'Active' : 'Disabled'}</span>
                                     </div>
                                 </div>
                                 <label class="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" id="bot2-enabled" class="sr-only peer" \${data.bot2Enabled ? 'checked' : ''}>
+                                    <input type="checkbox" id="bot2-enabled" class="sr-only peer" ${data.bot2Enabled ? 'checked' : ''}>
                                     <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
                                 </label>
                             </div>
@@ -4456,7 +4456,7 @@ app.get('/yougogirl', async (req, res) => {
                     <div class="card bg-emerald-500/5 border-emerald-500/20 text-center">
                         <h4 class="text-emerald-400 font-semibold mb-2">Webhook Status</h4>
                         <p class="text-sm text-slate-400 mb-4">Make sure the webhook is registered with Telegram to receive updates.</p>
-                        <a href="\${webhookLink}" target="_blank" class="inline-flex items-center px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all">
+                        <a href="${webhookLink}" target="_blank" class="inline-flex items-center px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all">
                             <i class="fa-solid fa-link mr-2"></i> Activate Webhook
                         </a>
                     </div>
