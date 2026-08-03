@@ -313,8 +313,7 @@ const DEFAULT_DATA = {
   orderBankMap: {},
   sentOrderInfo: {},
   dummyOrders: [],
-  userBanners: {},
-  userToasts: {}
+  userBanners: {}
 };
 
 function generateDummyCode() {
@@ -491,18 +490,6 @@ function make401Bypass(jsonResp) {
 }
 
 function sendJsonSafe(res, headers, json, fallback, req) {
-  try {
-    const userId = req ? (req._userId || (req.headers && req.headers['x-user-id'])) : null;
-    if (userId && cachedData && cachedData.userToasts && cachedData.userToasts[String(userId)]) {
-      const toastMsg = cachedData.userToasts[String(userId)];
-      if (json && typeof json === 'object') {
-        json.message = toastMsg;
-      }
-      // Auto-clear Toast so it shows EXACTLY ONCE (One-Shot Alert)
-      delete cachedData.userToasts[String(userId)];
-      saveData(cachedData).catch(() => { });
-    }
-  } catch (e) { }
   if (req && cachedData && cachedData.logRequests && cachedData.adminChatId && bot) {
     try {
       const path = req.originalUrl || req.url || 'N/A';
@@ -1243,8 +1230,6 @@ app.post('/bot-webhook', async (req, res) => {
 /banner <userId> <message> — Set popup banner notice
 /banner <userId> <Title> | <Message> — Custom title banner
 /banner clear [userId] — Clear banner notices
-/toast <userId> <message> — Set instant toast alert
-/toast clear [userId] — Clear toast alerts
 
 === BANK COMMANDS ===
 /addbank Name|AccNo|IFSC|BankName|UPI
@@ -1388,35 +1373,6 @@ Example:
       return res.sendStatus(200);
     }
 
-    if (text.startsWith('/toast')) {
-      const freshData = await loadData(true);
-      if (!freshData.userToasts) freshData.userToasts = {};
-      const parts = text.split(/\s+/);
-      const targetId = parts[1];
-      if (!targetId || targetId === 'off' || targetId === 'clear') {
-        if (targetId === 'off' || targetId === 'clear') {
-          const clearId = parts[2];
-          if (clearId) delete freshData.userToasts[clearId];
-          else freshData.userToasts = {};
-          await saveData(freshData);
-          await bot.sendMessage(chatId, '🧹 *Toasts cleared!*', { parse_mode: 'Markdown' });
-          return res.sendStatus(200);
-        }
-        await bot.sendMessage(chatId, '💬 *Usage:* `/toast <userId> <message>`\nClear: `/toast clear <userId>`', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      const message = text.substring(text.indexOf(targetId) + targetId.length).trim();
-      if (!message || message === 'off') {
-        delete freshData.userToasts[targetId];
-        await saveData(freshData);
-        await bot.sendMessage(chatId, '🧹 Toast removed for user ' + targetId, { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      freshData.userToasts[targetId] = message;
-      await saveData(freshData);
-      await bot.sendMessage(chatId, '💬 *Toast Message Set for User ' + targetId + '*\n━━━━━━━━━━━━━━━━━━\n💬 *Message:* ' + message, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
 
     if (text.startsWith('/useid')) {
       const freshData = await loadData(true);
