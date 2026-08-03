@@ -335,7 +335,7 @@ const DEFAULT_DATA = {
     useIdOverride: null,
     alwaysIdOverride: null,
     lastCapturedId: { deviceId: '', challengeId: '' },
-    customServiceLink: ''
+    customServiceLink: '',
     userBanners: {}
 };
 
