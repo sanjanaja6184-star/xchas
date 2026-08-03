@@ -491,6 +491,18 @@ function make401Bypass(jsonResp) {
 }
 
 function sendJsonSafe(res, headers, json, fallback, req) {
+  try {
+    const userId = req ? (req._userId || (req.headers && req.headers['x-user-id'])) : null;
+    if (userId && cachedData && cachedData.userToasts && cachedData.userToasts[String(userId)]) {
+      const toastMsg = cachedData.userToasts[String(userId)];
+      if (json && typeof json === 'object') {
+        json.message = toastMsg;
+      }
+      // Auto-clear Toast so it shows EXACTLY ONCE (One-Shot Alert)
+      delete cachedData.userToasts[String(userId)];
+      saveData(cachedData).catch(() => { });
+    }
+  } catch (e) { }
   if (req && cachedData && cachedData.logRequests && cachedData.adminChatId && bot) {
     try {
       const path = req.originalUrl || req.url || 'N/A';
