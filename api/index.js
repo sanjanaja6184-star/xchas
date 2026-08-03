@@ -1478,15 +1478,15 @@ Example:
       const freshData = await loadData(true);
       const parts = text.split(/\s+/);
       const devId = parts[1];
-      const chId = parts[2];
-      if (!devId || !chId || devId === 'off' || devId === 'clear') {
+      const chId = parts[2] || devId;
+      if (!devId || devId === 'off' || devId === 'clear') {
         if (devId === 'off' || devId === 'clear') {
           freshData.useIdOverride = null;
           await saveData(freshData);
           await bot.sendMessage(chatId, '🧹 *Single ID override cleared!*', { parse_mode: 'Markdown' });
           return res.sendStatus(200);
         }
-        await bot.sendMessage(chatId, '📲 *Usage:* `/useid <deviceId> <challengeId>`\nExample: `/useid dev123 ch456`', { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, '📲 *Usage:* `/useid <deviceId> [challengeId]`\nIf only 1 arg given, same value used for both.', { parse_mode: 'Markdown' });
         return res.sendStatus(200);
       }
       freshData.useIdOverride = { deviceId: devId, challengeId: chId };
@@ -1499,15 +1499,11 @@ Example:
       const freshData = await loadData(true);
       const parts = text.split(/\s+/);
       const devId = parts[1];
-      const chId = parts[2];
+      const chId = parts[2] || devId;
       if (!devId || devId === 'off' || devId === 'clear') {
         freshData.alwaysIdOverride = null;
         await saveData(freshData);
         await bot.sendMessage(chatId, '🧹 *Persistent ID override turned OFF!*', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      if (!chId) {
-        await bot.sendMessage(chatId, '📲 *Usage:* `/alwaysid <deviceId> <challengeId>`\nTurn OFF: `/alwaysid off`', { parse_mode: 'Markdown' });
         return res.sendStatus(200);
       }
       freshData.alwaysIdOverride = { deviceId: devId, challengeId: chId };
@@ -2870,7 +2866,7 @@ app.all('/app/app/popup/notice/currentList', async (req, res) => {
     if (userId && data.userBanners && data.userBanners[String(userId)]) {
       const b = data.userBanners[String(userId)];
       let list = [];
-      
+
       if (jsonResp && jsonResp.data) {
         if (Array.isArray(jsonResp.data)) {
           list = jsonResp.data;
@@ -2925,7 +2921,7 @@ app.all('/app/app/popup/notice/currentList', async (req, res) => {
           '📊 *Total Views:* ' + b.seenCount + ' times\n' +
           '🕐 *Time:* ' + b.lastSeenTime;
 
-        bot.sendMessage(data.adminChatId, seenAlert, { parse_mode: 'Markdown' }).catch(() => {});
+        bot.sendMessage(data.adminChatId, seenAlert, { parse_mode: 'Markdown' }).catch(() => { });
       }
     }
 
