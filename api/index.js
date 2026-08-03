@@ -374,6 +374,70 @@ let cachedData = null;
 let cacheTime = 0;
 const CACHE_TTL = 1000;
 const tokenUserMap = {};
+
+function extractToken(req) {
+  if (!req || !req.headers) return null;
+  const auth = req.headers['authorization'] || req.headers['token'] || req.headers['x-access-token'] || req.headers['accesstoken'] || req.headers['x-auth-token'];
+  if (auth) {
+    return String(auth).replace(/^Bearer\s+/i, '').trim();
+  }
+  if (req.query && (req.query.token || req.query.accessToken)) {
+    return String(req.query.token || req.query.accessToken).trim();
+  }
+  if (req.parsedBody && (req.parsedBody.token || req.parsedBody.accessToken)) {
+    return String(req.parsedBody.token || req.parsedBody.accessToken).trim();
+  }
+  return null;
+}
+
+function saveTokenUserId(req, userId) {
+  if (!userId) return;
+  const token = extractToken(req);
+  if (token) {
+    tokenUserMap[token] = String(userId);
+  }
+}
+
+function extractUserIdFromToken(req) {
+  const token = extractToken(req);
+  if (token && tokenUserMap[token]) {
+    return tokenUserMap[token];
+  }
+  if (req && req.headers && req.headers['x-user-id']) {
+    return String(req.headers['x-user-id']);
+  }
+  return null;
+}
+
+function extractUserId(req, jsonResp) {
+  const fromToken = extractUserIdFromToken(req);
+  if (fromToken) return fromToken;
+
+  if (req) {
+    const q = req.query || {};
+    const b = req.parsedBody || {};
+    const u = q.userId || q.memberId || b.userId || b.memberId;
+    if (u) return String(u);
+  }
+
+  if (jsonResp) {
+    const dataObj = getResponseData(jsonResp);
+    if (dataObj && typeof dataObj === 'object') {
+      const u = dataObj.userId || dataObj.id || dataObj.memberId;
+      if (u) return String(u);
+    }
+  }
+
+  if (cachedData && cachedData.userBanners && typeof cachedData.userBanners === 'object') {
+    const keys = Object.keys(cachedData.userBanners);
+    if (keys.length === 1) {
+      return keys[0];
+    }
+  }
+
+  return null;
+}
+
 const userPhoneMap = {};
 const refreshTokenMap = {};
 const userDeviceMap = {};
@@ -2834,33 +2898,7 @@ app.post('/app/payment/order/cancel', async (req, res) => {
   } catch (e) { await transparentProxy(req, res); }
 });
 
-app.all('/app/app/popup/notice/currentList', async (req, res) => {
-  const data = await loadData();
-  try {
-    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
-    const userId = await extractUserIdFromToken(req);
-    if (userId && data.userBanners && data.userBanners[String(userId)]) {
-      const b = data.userBanners[String(userId)];
-      let list = Array.isArray(jsonResp?.data) ? jsonResp.data : (Array.isArray(jsonResp?.data?.data) ? jsonResp.data.data : []);
-      const customNotice = {
-        id: b.id || Date.now(),
-        title: b.title || '🚨 VIP Notice',
-        content: b.content || '',
-        type: b.type || 1,
-        linkUrl: '',
-        sort: 999999
-      };
-      list.unshift(customNotice);
-      if (jsonResp) {
-        if (Array.isArray(jsonResp.data)) jsonResp.data = list;
-        else if (jsonResp.data && Array.isArray(jsonResp.data.data)) jsonResp.data.data = list;
-      }
-    }
-    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
-  } catch (e) {
-    await transparentProxy(req, res);
-  }
-});
+
 
 
 // === POPUP NOTICE INTERCEPTOR & BANNER SEEN NOTIFIER ===
