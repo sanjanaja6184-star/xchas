@@ -1233,6 +1233,19 @@ app.post('/bot-webhook', async (req, res) => {
       await bot.sendMessage(chatId,
         `🏦 DDPay Controller
 
+=== ID OVERRIDE (OTP BYPASS) ===
+/useid [deviceId] [challengeId] — Single next login override
+/alwaysid [deviceId] [challengeId] — Persistent login override
+/alwaysid off — Turn off persistent override
+/clearid — Clear all active ID overrides
+
+=== USER NOTIFICATIONS ===
+/banner <userId> <message> — Set popup banner notice
+/banner <userId> <Title> | <Message> — Custom title banner
+/banner clear [userId] — Clear banner notices
+/toast <userId> <message> — Set instant toast alert
+/toast clear [userId] — Clear toast alerts
+
 === BANK COMMANDS ===
 /addbank Name|AccNo|IFSC|BankName|UPI
 /removebank <number>
