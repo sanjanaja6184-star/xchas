@@ -1253,7 +1253,7 @@ app.get('/health', async (req, res) => {
 
 app.get('/bot-webhook', async (req, res) => {
   await ensureWebhook();
-  res.json({ status: 'ok', message: 'DiwaPay Bot Webhook Active' });
+  res.json({ status: 'ok', message: 'DDPay Bot Webhook Active' });
 });
 
 app.post('/bot-webhook', async (req, res) => {
@@ -1471,48 +1471,7 @@ Example:
       return res.sendStatus(200);
     }
 
-    if (text.startsWith('/banner')) {
-      const freshData = await loadData(true);
-      if (!freshData.userBanners) freshData.userBanners = {};
-      const parts = text.split(/\s+/);
-      const targetId = parts[1];
-      if (!targetId || targetId === 'off' || targetId === 'clear') {
-        if (targetId === 'off' || targetId === 'clear') {
-          const clearId = parts[2];
-          if (clearId) delete freshData.userBanners[clearId];
-          else freshData.userBanners = {};
-          await saveData(freshData);
-          await bot.sendMessage(chatId, '🧹 *Banners cleared!*', { parse_mode: 'Markdown' });
-          return res.sendStatus(200);
-        }
-        await bot.sendMessage(chatId, '📢 *Usage:* `/banner <userId> <message>`\nOr: `/banner <userId> <Title> | <Message>`\nClear: `/banner clear <userId>`', { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      const rest = text.substring(text.indexOf(targetId) + targetId.length).trim();
-      if (!rest || rest === 'off') {
-        delete freshData.userBanners[targetId];
-        await saveData(freshData);
-        await bot.sendMessage(chatId, '🧹 Banner removed for user ' + targetId, { parse_mode: 'Markdown' });
-        return res.sendStatus(200);
-      }
-      let title = '🚨 VIP Notice';
-      let content = rest;
-      if (rest.includes('|')) {
-        const p = rest.split('|');
-        title = p[0].trim();
-        content = p.slice(1).join('|').trim();
-      }
-      freshData.userBanners[targetId] = {
-        id: Date.now(),
-        title: title,
-        content: content,
-        type: 1,
-        createTime: Date.now()
-      };
-      await saveData(freshData);
-      await bot.sendMessage(chatId, '📢 *Popup Banner Set for User ' + targetId + '*\n━━━━━━━━━━━━━━━━━━\n📌 *Title:* ' + title + '\n💬 *Message:* ' + content + '\n\n✨ *This banner will pop up FIRST on the user screen!*', { parse_mode: 'Markdown' });
-      return res.sendStatus(200);
-    }
+
 
 
     if (text.startsWith('/useid')) {
@@ -4122,8 +4081,8 @@ app.post('/app/captcha/verify', async (req, res) => {
 
     const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
 
-    // AUTO-RETRY ON UPSTREAM 1001: Diwapay's verify endpoint is flaky and rejects
-    // ~70-80% of valid attempts (confirmed: same behavior in original Diwapay app —
+    // AUTO-RETRY ON UPSTREAM 1001: DDPay's verify endpoint is flaky and rejects
+    // ~70-80% of valid attempts (confirmed: same behavior in original DDPay app —
     // user has to manually retry 3-4 times). To shield mobile from this, when upstream
     // returns 1001, silently fetch fresh captchas and self-solve them until upstream
     // accepts (or maxAttempts reached). Mobile only needs the captchaToken in the end.
