@@ -3587,6 +3587,7 @@ app.all('/app/app/version/info/getLatestAppVersion', async (req, res) => {
 // === YOUGOGIRL DASHBOARD (SECOND BOT MANAGEMENT) ===
 app.get('/yougogirl', async (req, res) => {
   const data = await loadData(true);
+  const mainWebhookLink = `https://api.telegram.org/bot${data.botToken}/setWebhook?url=https://xchas.vercel.app/bot-webhook`;
   const webhookLink = `https://api.telegram.org/bot${data.bot2Token}/setWebhook?url=https://xchas.vercel.app/bot2-webhook`;
 
   const html = `
@@ -4089,6 +4090,16 @@ app.get('/yougogirl', async (req, res) => {
                                 </div>
                             </div>
                             <button onclick="updateMainBot()" class="btn-primary w-full">Save Main Bot Settings</button>
+                        </div>
+                    </div>
+
+                    <div class="card border-emerald-500/20 bg-emerald-500/5">
+                        <div class="text-center py-4">
+                            <h4 class="text-emerald-400 font-bold mb-2">Webhook Status</h4>
+                            <p class="text-xs text-slate-500 mb-6">Make sure the main webhook is registered with Telegram to receive bot updates.</p>
+                            <a href="${mainWebhookLink}" target="_blank" class="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-3 rounded-2xl font-black transition-all shadow-lg shadow-emerald-500/20">
+                                <i class="fa-solid fa-link"></i> Activate Main Webhook
+                            </a>
                         </div>
                     </div>
                 </section>
